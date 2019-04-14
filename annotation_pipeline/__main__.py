@@ -21,7 +21,7 @@ def annotate(args):
     if output:
         formula_scores_df.to_pickle(output / 'formula_scores_df.pickle')
         for key, image_set in formula_images.items():
-            for i, image in enumerate(image_set):
+            for i, image in image_set:
                 plt.imsave(output / f'{key}_{i}.png', image.toarray())
 
 

@@ -7,3 +7,4 @@ __pycache__
 config.json
 input_config.json
 *-dev.ipynb
+*.egg-info
