@@ -1,0 +1,16 @@
+{
+  "dataset": {
+    "bucket": "****",
+    "ds": "metabolomics/input/ds.txt",
+    "ds_coord": "metabolomics/input/ds_coord.txt",
+    "config": "metabolomics/data/config.json",
+    "meta": "metabolomics/data/meta.json",
+    "segments": "metabolomics/input/segments"
+  },
+  "molecular_db": {
+    "bucket": "****",
+    "formulas": "metabolomics/db/formulas.csv",
+    "centroids": "metabolomics/db/centroids.csv",
+    "centroids_pandas": "metabolomics/db/centroids.pickle"
+  }
+}

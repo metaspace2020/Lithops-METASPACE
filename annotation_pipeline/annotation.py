@@ -86,13 +86,13 @@ def filter_formula_images(formula_images, formula_scores_df):
             if f_i in formula_scores_df.index}
 
 
-def annotate_spectra(config, bucket_name, input_db, input_data, segm_n, pixel_indices, nrows, ncols):
+def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows, ncols):
     def annotate_segm_spectra(key, data_stream, ibm_cos):
         spectra = pickle.loads(data_stream.read())
 
         if not os.path.isfile('/tmp/centroids.pickle'):
             print("Read centroids DB from IBM COS")
-            ibm_cos.download_file(bucket_name, input_db['centroids_pandas'], '/tmp/centroids.pickle')
+            ibm_cos.download_file(input_db["bucket"], input_db['centroids_pandas'], '/tmp/centroids.pickle')
 
         with open('/tmp/centroids.pickle', 'rb') as centroids:
             centroids_df = pickle.load(centroids)
@@ -107,7 +107,7 @@ def annotate_spectra(config, bucket_name, input_db, input_data, segm_n, pixel_in
     empty_image = np.zeros((nrows, ncols))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    iterdata = [f'{bucket_name}/{input_data["segments"]}/{segm_i}.pickle' for segm_i in range(segm_n)]
+    iterdata = [f'{input_data["bucket"]}/{input_data["segments"]}/{segm_i}.pickle' for segm_i in range(segm_n)]
     pw.map(annotate_segm_spectra, iterdata)
     results = pw.get_result()
     pw.clean()
