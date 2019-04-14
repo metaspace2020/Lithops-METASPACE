@@ -8,7 +8,7 @@ from .annotation import annotate_spectra, merge_annotation_results
 logger = logging.getLogger(name='annotation_pipeline')
 
 
-def annotate_dataset(config, input_data, input_db,segm_n = 256):
+def annotate_dataset(config, input_data, input_db, segm_n=256):
 
     logger.info('Storing centroids database')
     store_centroids_database(config, input_db)
