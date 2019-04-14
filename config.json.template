@@ -1,0 +1,16 @@
+{
+  "ibm_cf": {
+    "endpoint": "https://****.functions.cloud.ibm.com",
+    "namespace": "****",
+    "action_memory": 1024,
+    "api_key": "****"
+  },
+  "ibm_cos": {
+    "endpoint": "https://s3.****.cloud-object-storage.appdomain.cloud",
+    "api_key": "****"
+  },
+  "pywren": {
+    "storage_bucket": "****",
+    "runtime": "ibmfunctions/pywren-metabolomics:3.6"
+  }
+}
