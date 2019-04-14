@@ -39,8 +39,6 @@ if __name__ == '__main__':
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
     annotate_parser.set_defaults(func=annotate)
-    subparsers.add_parser('process')
-    subparsers.add_parser('convert')
 
     args = parser.parse_args()
     args.func(args)
