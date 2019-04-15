@@ -1,0 +1,10 @@
+.ipynb_checkpoints
+.idea
+__pycache__
+/metabolomics
+/input
+/output
+config.json
+input_config.json
+*-dev.ipynb
+*.egg-info
