@@ -10,7 +10,17 @@
   "molecular_db": {
     "bucket": "****",
     "formulas": "metabolomics/db/formulas.csv",
+    "formulas_chunks": "metabolomics/db/formulas",
+    "ions_full": "metabolomics/db/ions_full.pickle",
     "centroids": "metabolomics/db/centroids.csv",
-    "centroids_pandas": "metabolomics/db/centroids.pickle"
+    "centroids_pandas": "metabolomics/db/centroids.pickle",
+    "databases": [
+      "metabolomics/db/mol_db1.csv",
+      "metabolomics/db/mol_db2.csv",
+      "metabolomics/db/mol_db3.csv",
+      "metabolomics/db/mol_db4.csv"
+    ],
+    "adducts": ["","+H","+Na","+K"],
+    "modifiers": ["", "-H2O", "-CO2", "-NH3"]
   }
 }
