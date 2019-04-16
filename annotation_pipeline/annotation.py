@@ -92,7 +92,7 @@ def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows,
 
         if not os.path.isfile('/tmp/centroids.pickle'):
             print("Read centroids DB from IBM COS")
-            ibm_cos.download_file(input_db["bucket"], input_db['centroids_pandas'], '/tmp/centroids.pickle')
+        ibm_cos.download_file(input_db["bucket"], input_db['centroids_pandas'], '/tmp/centroids.pickle')
 
         with open('/tmp/centroids.pickle', 'rb') as centroids:
             centroids_df = pickle.load(centroids)

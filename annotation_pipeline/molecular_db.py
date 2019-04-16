@@ -1,8 +1,9 @@
 import os
+from io import BytesIO
 from itertools import repeat
 
 import ibm_boto3
-from ibm_botocore.client import Config
+from ibm_botocore.client import Config, ClientError
 import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
@@ -57,7 +58,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
             return []
 
     def calculate_peaks_for_chunk(key, data_stream):
-        chunk_df = pd.read_pickle(data_stream._raw_stream)
+        chunk_df = pd.read_pickle(data_stream, None)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
@@ -78,8 +79,8 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
 
     from .isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
     isocalc_wrapper = IsocalcWrapper({
-        # These instrument settings are usually customized on a per-dataset basis,
-        # but most of EMBL's datasets use these settings:
+        # These instrument settings are usually customized on a per-dataset basis out of a set of
+        # 18 possible combinations, but most of EMBL's datasets are compatible with the following settings:
         'charge': {
             'polarity': '+',
             'n_charges': 1,
@@ -87,51 +88,41 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
         'isocalc_sigma': 0.001238
     })
 
-    # TODO: Switch to pywren codepath when cpyMSpec is in the runtime
-    # pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    # iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
-    # futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
-    # centroids_shape, centroids_head = pw.get_result(futures)
-    # pw.clean()
+    if False:
+        # TODO: Switch to this pywren codepath when cpyMSpec is in the runtime
+        pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+        iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
+        futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
+        centroids_shape, centroids_head = pw.get_result(futures)
+        pw.clean()
+    else:
+        ibm_cos = get_cos_client(config)
 
-    ibm_cos = get_cos_client(config)
-
-    from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=(os.cpu_count() or 1)) as ex:
-        all_chunks = list(ex.map(calculate_peaks_for_chunk_local, formula_chunk_keys, range(len(formula_chunk_keys))))
-    centroids_shape, centroids_head = merge_chunks_and_store(all_chunks, ibm_cos)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=(os.cpu_count() or 1)) as ex:
+            all_chunks = list(ex.map(calculate_peaks_for_chunk_local, formula_chunk_keys, range(len(formula_chunk_keys))))
+        centroids_shape, centroids_head = merge_chunks_and_store(all_chunks, ibm_cos)
 
     return centroids_shape, centroids_head
 
 
 def build_database(config, input_db, n_formula_chunks=256):
     def generate_formulas(key, data_stream, adducts, modifiers):
-        db = pd.read_csv(data_stream._raw_stream)
-        dfs = []
+        mols = pickle.loads(data_stream.read())
+        formulas = set()
 
         for adduct in adducts:
             for modifier in modifiers:
-                formulas = db.apply(lambda row: safe_generate_ion_formula(row.sf, adduct, modifier), axis=1)
-                df = db.assign(formula=formulas, adduct=adduct, modifier=modifier)
-                df = df[formulas != None]
-                dfs.append(df)
+                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
-        result = pd.concat(dfs)
-
-        return result
+        if None in formulas:
+            formulas.remove(None)
+        return formulas
 
     def store_formulas(results, ibm_cos):
-        ions = pd.concat(results)
-        ions.sort_values(['sf','adduct','modifier'], inplace=True)
-        ions.reset_index(drop=True, inplace=True)
-        ions.index.name = 'ion_i'
-
         # Reduce list of formulas for processing to include only unique formulas
-        formulas = ions[['formula']].drop_duplicates().sort_values(by='formula').reset_index(drop=True)
+        formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
         formulas.index.name = 'formula_i'
-
-        # Add formula IDs to ions so that ions can be mapped back to formulas
-        ions = ions.merge(formulas.reset_index(), on='formula', how='outer')
 
         num_chunks = min(len(formulas), n_formula_chunks)
         chunk_keys = []
@@ -140,7 +131,7 @@ def build_database(config, input_db, n_formula_chunks=256):
         for i in range(num_chunks):
             lo = len(formulas) * i // num_chunks
             hi = len(formulas) * (i + 1) // num_chunks
-            chunk_key = f'{input_db["formulas_dir"]}/{i}.pickle'
+            chunk_key = f'{input_db["formulas_chunks"]}/{i}.pickle'
             chunk_keys.append(chunk_key)
             chunk = pd.DataFrame(formulas.formula[lo:hi], copy=True)
             chunk.index.name = 'formula_i'
@@ -148,28 +139,19 @@ def build_database(config, input_db, n_formula_chunks=256):
             ibm_cos.put_object(Bucket=input_db['bucket'], Key=chunk_key,
                                Body=pickle.dumps(chunk))
 
-        # Write full dataframe to pickle so that molecules can be matched after annotation for further analysis
-        ibm_cos.put_object(Bucket=input_db['bucket'], Key=input_db['ions_full'],
-                           Body=pickle.dumps(ions))
+        return len(formulas), chunk_keys
 
-        return chunk_keys
-
-    adducts = [*input_db.get('adducts', ['+H', '+Na', '+K']), *DECOY_ADDUCTS]
-    modifiers = input_db.get('modifiers') or ['']
+    adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
+    modifiers = input_db['modifiers']
     databases = input_db['databases']
 
-    ibm_cos = get_cos_client(config)
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     iterdata = [(f'{input_db["bucket"]}/{database}', [adduct], modifiers) for database in databases for adduct in adducts]
-    # TODO: Fix OOM in reducer. Maybe by handling ions_full separately because it's much bigger and not needed until after FDR ranking
-    # futures = pw.map_reduce(generate_formulas, iterdata, store_formulas)
-    # formula_chunk_keys = pw.get_result(futures)
-    futures = pw.map(generate_formulas, iterdata)
-    results = pw.get_result(futures)
-    formula_chunk_keys = store_formulas(results, ibm_cos)
+    futures = pw.map_reduce(generate_formulas, iterdata, store_formulas)
+    num_formulas, formula_chunk_keys = pw.get_result(futures)
     pw.clean()
 
-    return formula_chunk_keys
+    return num_formulas, formula_chunk_keys
 
 
 def clean_formula_chunks(config, input_db, formula_chunk_keys):
@@ -178,8 +160,17 @@ def clean_formula_chunks(config, input_db, formula_chunk_keys):
                            Delete={'Objects': [{'Key': key} for key in formula_chunk_keys]})
 
 
-def dump_mol_db_to_file(db_id, file):
+def dump_mol_db(config, bucket, key, db_id, force=False):
     import requests
-    mols = requests.get(f'https://metaspace2020.eu/mol_db/v1/databases/{db_id}/molecules?limit=999999&fields=sf').json()['data']
-    mols_df = pd.DataFrame([mol['sf'] for mol in mols], columns=[['sf']]).drop_duplicates()
-    mols_df.to_csv(file)
+    ibm_cos = get_cos_client(config)
+    try:
+        ibm_cos.head_object(Bucket=bucket, Key=key)
+        should_dump = force
+    except ClientError:
+        should_dump = True
+
+    if should_dump:
+        mols = requests.get(f'https://metaspace2020.eu/mol_db/v1/databases/{db_id}/molecules?limit=999999&fields=sf').json()['data']
+        mols_df = sorted(set(mol['sf'] for mol in mols))
+        with BytesIO() as fileobj:
+            ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mols_df))

@@ -12,7 +12,9 @@ setup(name='pywren-annotation-pipeline',
       packages=find_packages(),
       install_requires=[
           "pywren-ibm-cloud>=1.0.8",
-          "pandas>=0.19.2",
+          # pandas version should match the version in the runtime to ensure data generated locally can be unpickled
+          # in pywren actions
+          "pandas==0.23.3",
           "pyImagingMSpec==0.1.4",
           "cpyImagingMSpec==0.3.2",
           "pyMSpec==0.1.2",
