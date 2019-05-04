@@ -2,51 +2,16 @@ import os
 from io import BytesIO
 from itertools import repeat
 
-import ibm_boto3
-from ibm_botocore.client import Config, ClientError
+from ibm_botocore.client import ClientError
 import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
 
 from .formula_parser import safe_generate_ion_formula
+from .utils import get_ibm_cos_client
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
-
-def get_cos_client(config):
-    return ibm_boto3.client(service_name='s3',
-                            ibm_api_key_id=config['ibm_cos']['api_key'],
-                            config=Config(signature_version='oauth'),
-                            endpoint_url=config['ibm_cos']['endpoint'])
-
-
-def process_formulas_database(config, input_db):
-    def process_formulas(key, data_stream):
-        formulas_df = pd.read_csv(data_stream._raw_stream).set_index('formula_i')
-        return formulas_df.shape, formulas_df.head()
-
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=256)
-    iterdata = [f'{input_db["bucket"]}/{input_db["formulas"]}']
-    pw.map(process_formulas, iterdata)
-    formulas_shape, formulas_head = pw.get_result()
-    pw.clean()
-
-    return formulas_shape, formulas_head
-
-
-def store_centroids_database(config, input_db):
-    def store_centroids(key, data_stream, ibm_cos):
-        centroids_df = pd.read_csv(data_stream._raw_stream).set_index('formula_i')
-        ibm_cos.put_object(Bucket=input_db['bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
-        return centroids_df.shape, centroids_df.head(8)
-
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    iterdata = [f'{input_db["bucket"]}/{input_db["centroids"]}']
-    pw.map(store_centroids, iterdata)
-    centroids_shape, centroids_head = pw.get_result()
-    pw.clean()
-
-    return centroids_shape, centroids_head
 
 
 def calculate_centroids(config, input_db, formula_chunk_keys):
@@ -58,7 +23,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
             return []
 
     def calculate_peaks_for_chunk(key, data_stream):
-        chunk_df = pd.read_pickle(data_stream, None)
+        chunk_df = pd.read_pickle(data_stream._raw_stream, None)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
@@ -72,8 +37,8 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         return peaks_df
 
-    def merge_chunks_and_store(chunks, ibm_cos):
-        centroids_df = pd.concat(chunks).set_index('formula_i')
+    def merge_chunks_and_store(results, ibm_cos):
+        centroids_df = pd.concat(results).set_index('formula_i')
         ibm_cos.put_object(Bucket=input_db['bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
         return centroids_df.shape, centroids_df.head(8)
 
@@ -88,15 +53,15 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
         'isocalc_sigma': 0.001238
     })
 
-    if False:
-        # TODO: Switch to this pywren codepath when cpyMSpec is in the runtime
+    if True:
+        # Change to false to calculate locally
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
         iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
         futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
         centroids_shape, centroids_head = pw.get_result(futures)
         pw.clean()
     else:
-        ibm_cos = get_cos_client(config)
+        ibm_cos = get_ibm_cos_client(config)
 
         from concurrent.futures import ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=(os.cpu_count() or 1)) as ex:
@@ -155,14 +120,14 @@ def build_database(config, input_db, n_formula_chunks=256):
 
 
 def clean_formula_chunks(config, input_db, formula_chunk_keys):
-    ibm_cos = get_cos_client(config)
+    ibm_cos = get_ibm_cos_client(config)
     ibm_cos.delete_objects(Bucket=input_db['bucket'],
                            Delete={'Objects': [{'Key': key} for key in formula_chunk_keys]})
 
 
 def dump_mol_db(config, bucket, key, db_id, force=False):
     import requests
-    ibm_cos = get_cos_client(config)
+    ibm_cos = get_ibm_cos_client(config)
     try:
         ibm_cos.head_object(Bucket=bucket, Key=key)
         should_dump = force
