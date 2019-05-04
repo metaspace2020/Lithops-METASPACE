@@ -107,7 +107,9 @@ def annotate_spectra(config, input_data, input_db, segm_n):
         return formula_scores_df, formula_images
 
     cos_client = get_ibm_cos_client(config)
-    spectra_coords_stream = cos_client.get_object(Bucket=input_data['bucket'], Key=input_data['ds_coord'])['Body']
+    ds_id = input_data['ds_id']
+    spectra_coords_stream = cos_client.get_object(Bucket=input_data['bucket'],
+                                                  Key=input_data['datasets'][ds_id]['ds_coord'])['Body']
     spectra_coords = parse_txt(None, spectra_coords_stream, parse_spectrum_coord)
     pixel_indices, nrows, ncols = real_pixel_indices(spectra_coords)
     empty_image = np.zeros((nrows, ncols))

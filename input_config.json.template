@@ -1,8 +1,33 @@
 {
   "dataset": {
     "bucket": "****",
-    "ds": "metabolomics/input/ds.txt",
-    "ds_coord": "metabolomics/input/ds_coord.txt",
+    "datasets": {
+      "local": {
+        "ds": "metabolomics/input/ds.txt",
+        "ds_coord": "metabolomics/input/ds_coord.txt",
+        "ds_path": "",
+        "ds_coord_path": ""
+      },
+      "small": {
+        "ds": "metabolomics/input/ds1.txt",
+        "ds_coord": "metabolomics/input/ds1_coord.txt",
+        "ds_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds5.txt",
+        "ds_coord_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds5_coord.txt"
+      },
+      "medium": {
+        "ds": "metabolomics/input/ds2.txt",
+        "ds_coord": "metabolomics/input/ds2_coord.txt",
+        "ds_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds3.txt",
+        "ds_coord_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds3_coord.txt"
+      },
+      "large": {
+        "ds": "metabolomics/input/ds3.txt",
+        "ds_coord": "metabolomics/input/ds3_coord.txt",
+        "ds_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds4.txt",
+        "ds_coord_link": "http://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/input/ds4_coord.txt"
+      }
+    },
+    "ds_id": "local",
     "config": "metabolomics/data/config.json",
     "meta": "metabolomics/data/meta.json",
     "segments": "metabolomics/input/segments"

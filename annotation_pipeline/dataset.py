@@ -1,5 +1,7 @@
 import numpy as np
 import io
+from .utils import get_ibm_cos_client, copy_local, copy_url
+from ibm_botocore.client import ClientError
 
 
 def parse_txt(key, data_stream, func):
@@ -42,3 +44,37 @@ def real_pixel_indices(spectra_coords):
     return pixel_indices.astype(np.int32), nrows, ncols
 
 
+def dumb_input_dataset(config, input_data, force=False):
+    cos_client = get_ibm_cos_client(config)
+    ds_id = input_data['ds_id']
+    try:
+        cos_client.head_object(Bucket=input_data['bucket'], Key=input_data['datasets'][ds_id]['ds'])
+        cos_client.head_object(Bucket=input_data['bucket'], Key=input_data['datasets'][ds_id]['ds_coord'])
+        should_dump = force
+    except ClientError:
+        should_dump = True
+
+    if should_dump:
+        if ds_id == "local":
+            copy_local(cos_client,
+                       src=input_data['datasets'][ds_id]['ds_path'],
+                       target_bucket=input_data['bucket'],
+                       target_key=input_data['datasets'][ds_id]['ds'])
+
+            copy_local(cos_client,
+                       src=input_data['datasets'][ds_id]['ds_coord_path'],
+                       target_bucket=input_data['bucket'],
+                       target_key=input_data['datasets'][ds_id]['ds_coord'])
+
+        else:
+            copy_url(cos_client,
+                     url=input_data['datasets'][ds_id]['ds_link'],
+                     target_bucket=input_data['bucket'],
+                     target_key=input_data['datasets'][ds_id]['ds'])
+
+            copy_url(cos_client,
+                     url=input_data['datasets'][ds_id]['ds_coord_link'],
+                     target_bucket=input_data['bucket'],
+                     target_key=input_data['datasets'][ds_id]['ds_coord'])
+    else:
+        print("Dataset has been already uploaded")
