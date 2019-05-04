@@ -2,7 +2,7 @@ import pickle
 import sys
 import numpy as np
 import pywren_ibm_cloud as pywren
-from .dataset import parse_txt, parse_spectrum_line, reduce_chunks
+from .dataset import parse_txt, parse_spectrum_line
 
 
 def generate_segm_intervals(config, input_db, segm_n):
@@ -32,15 +32,23 @@ def split_spectra_into_segments(config, input_data, segm_n, segm_intervals):
             rows.append(([sp_i], mzs[smask], ints[smask]))
         return rows
 
+    def reduce_chunks(results):
+        final_result = []
+        for res_list in results:
+            final_result.extend(res_list)
+        return final_result
+
     def store_segm(key, data_stream, ibm_cos, segm_i, interval):
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-        iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', *interval]]
-        pw.map_reduce(iterate_over_segment, iterdata, reduce_chunks, chunk_size=64*1024**2)
-        segm_spectra = pickle.dumps(np.array(pw.get_result()))
+        iterdata = [[f'{input_data["bucket"]}/{input_data["datasets"][ds_id]["ds"]}', *interval]]
+        pw.map(iterate_over_segment, iterdata, chunk_size=64*1024**2)
+        results = reduce_chunks(pw.get_result())
+        segm_spectra = pickle.dumps(np.array(results))
         ibm_cos.put_object(Bucket=input_data["bucket"], Key=f'{input_data["segments"]}/{segm_i}.pickle', Body=segm_spectra)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=256)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', segm_i, segm_intervals[segm_i]] for segm_i in range(segm_n)]
+    ds_id = input_data["ds_id"]
+    iterdata = [[f'{input_data["bucket"]}/{input_data["datasets"][ds_id]["ds"]}', segm_i, segm_intervals[segm_i]] for segm_i in range(segm_n)]
     futures = pw.map(store_segm, iterdata)
     pw.get_result(futures)
     pw.clean()
