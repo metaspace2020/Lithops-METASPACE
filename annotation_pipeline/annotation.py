@@ -9,6 +9,8 @@ from itertools import chain
 import numpy as np
 import pandas as pd
 import pickle
+from .dataset import parse_txt, real_pixel_indices, parse_spectrum_coord
+from .utils import get_ibm_cos_client
 
 
 def sp_df_gen(sp_it, pixel_indices):
@@ -86,7 +88,7 @@ def filter_formula_images(formula_images, formula_scores_df):
             if f_i in formula_scores_df.index}
 
 
-def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows, ncols):
+def annotate_spectra(config, input_data, input_db, segm_n):
     def annotate_segm_spectra(key, data_stream, ibm_cos):
         spectra = pickle.loads(data_stream.read())
 
@@ -104,6 +106,10 @@ def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows,
         formula_images = filter_formula_images(formula_images, formula_scores_df)
         return formula_scores_df, formula_images
 
+    cos_client = get_ibm_cos_client(config)
+    spectra_coords_stream = cos_client.get_object(Bucket=input_data['bucket'], Key=input_data['ds_coord'])['Body']
+    spectra_coords = parse_txt(None, spectra_coords_stream, parse_spectrum_coord)
+    pixel_indices, nrows, ncols = real_pixel_indices(spectra_coords)
     empty_image = np.zeros((nrows, ncols))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)

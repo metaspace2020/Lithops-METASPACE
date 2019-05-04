@@ -8,17 +8,9 @@ import matplotlib.pyplot as plt
 
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import annotate_dataset
+from annotation_pipeline.utils import get_ibm_cos_client
 
 logger = logging.getLogger(name='annotation_pipeline')
-
-
-def get_ibm_cos_client(config):
-    import ibm_boto3
-    from ibm_botocore.client import Config
-    return ibm_boto3.client(service_name='s3',
-                            ibm_api_key_id=config['ibm_cos']['api_key'],
-                            config=Config(signature_version='oauth'),
-                            endpoint_url=config['ibm_cos']['endpoint'])
 
 
 def annotate(args, config):

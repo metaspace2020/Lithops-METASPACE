@@ -1,4 +1,3 @@
-import pywren_ibm_cloud as pywren
 import numpy as np
 import io
 
@@ -14,13 +13,6 @@ def parse_txt(key, data_stream, func):
     return rows
 
 
-def reduce_chunks(results):
-    final_result = []
-    for res_list in results:
-        final_result.extend(res_list)
-    return final_result
-
-
 def parse_spectrum_line(s):
     ind_s, mzs_s, int_s = s.split('|')
     return (int(ind_s),
@@ -28,29 +20,9 @@ def parse_spectrum_line(s):
             np.fromstring(int_s, sep=' '))
 
 
-def read_dataset_spectra(config, input_data):
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', parse_spectrum_line]]
-    # NOTE: we need to be absolutely sure that using chunk_size doesn't split a line into separate chunks
-    pw.map_reduce(parse_txt, iterdata, reduce_chunks, chunk_size=64*1024**2)
-    spectra = pw.get_result()
-    pw.clean()
-
-    return spectra
-
-
-def read_dataset_coords(config, input_data):
-    def parse_spectrum_coord(s):
-        sp_i, x, y = map(int, s.split(','))
-        return sp_i, x, y
-
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=128)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds_coord"]}', parse_spectrum_coord]]
-    pw.map(parse_txt, iterdata)
-    spectra_coords = pw.get_result()
-    pw.clean()
-
-    return spectra_coords
+def parse_spectrum_coord(s):
+    sp_i, x, y = map(int, s.split(','))
+    return sp_i, x, y
 
 
 def real_pixel_indices(spectra_coords):
