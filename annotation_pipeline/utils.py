@@ -19,9 +19,9 @@ def copy_local(cos_client, src, target_bucket, target_key):
 
 def copy_url(cos_client, url, target_bucket, target_key):
     print('Downloading {}'.format(url))
-    file = requests.get(url).json()['data']
+    file = requests.get(url)
     print('Copying to {}/{}'.format(target_bucket, target_key))
     cos_client.put_object(Bucket=target_bucket,
                           Key=target_key,
-                          Body=file.encode('utf-8'))
+                          Body=file._content)
     print('Copy completed for {}/{}'.format(target_bucket, target_key))
