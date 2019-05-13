@@ -1,17 +1,14 @@
 {
   "dataset": {
     "bucket": "****",
-    "ds": "metabolomics/input/ds.txt",
-    "ds_coord": "metabolomics/input/ds_coord.txt",
-    "config": "metabolomics/data/config.json",
-    "meta": "metabolomics/data/meta.json",
-    "segments": "metabolomics/input/segments"
+    "path": "metabolomics/input",
+    "ds_segments": "metabolomics/tmp/ds_segments",
+    "centr_segments": "metabolomics/tmp/centr_segments",
+    "formula_images": "metabolomics/tmp/formula_images"
   },
   "molecular_db": {
     "bucket": "****",
-    "formulas": "metabolomics/db/formulas.csv",
     "formulas_chunks": "metabolomics/db/formulas",
-    "centroids": "metabolomics/db/centroids.csv",
     "centroids_pandas": "metabolomics/db/centroids.pickle",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
