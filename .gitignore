@@ -5,6 +5,6 @@ __pycache__
 /input
 /output
 config.json
-input_config.json
+input_configs/input_config*
 *-dev.ipynb
 *.egg-info
