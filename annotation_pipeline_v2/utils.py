@@ -4,6 +4,10 @@ import numpy as np
 import ibm_boto3
 from ibm_botocore.client import Config
 
+logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
+logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
+logging.getLogger('urllib3').setLevel(logging.CRITICAL)
+
 logger = logging.getLogger('annotation-pipeline')
 # handler = logging.StreamHandler()
 # format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')

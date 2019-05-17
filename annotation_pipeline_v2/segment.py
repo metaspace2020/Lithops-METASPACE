@@ -1,11 +1,74 @@
 from shutil import rmtree
 import numpy as np
 import pandas as pd
-
-from .utils import logger, get_pixel_indices
+import pickle
+import sys
+from .utils import logger, get_pixel_indices, get_ibm_cos_client
+from multiprocessing.pool import ThreadPool
+import pywren_ibm_cloud as pywren
 
 ISOTOPIC_PEAK_N = 4
 MAX_MZ_VALUE = 10**5
+
+
+def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
+
+    def chunk_list(l, size=5000):
+        n = (len(l) - 1) // size + 1
+        for i in range(n):
+            yield l[size * i:size * (i + 1)]
+
+    cos_client = get_ibm_cos_client(config)
+
+    sp_id_to_idx = get_pixel_indices(coordinates)
+
+    chunk_size = 5000
+    coord_chunk_it = chunk_list(coordinates, chunk_size)
+
+    sp_i_lower_bounds = []
+    sp_i_bound = 0
+    while sp_i_bound <= sp_n:
+        sp_i_lower_bounds.append(sp_i_bound)
+        sp_i_bound += chunk_size
+
+    logger.debug(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
+
+    def _chunk_spectra(args):
+        ch_i = args[0]
+        coord_chunk = args[1]
+
+        logger.debug(f'Parsing spectra chunk {ch_i}')
+        sp_i = sp_i_lower_bounds[ch_i]
+        sp_inds_list, mzs_list, ints_list = [], [], []
+        for x, y in coord_chunk:
+            mzs_, ints_ = imzml_parser.getspectrum(sp_i)
+            mzs_, ints_ = map(np.array, [mzs_, ints_])
+            sp_idx = sp_id_to_idx[sp_i]
+            sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
+            mzs_list.append(mzs_)
+            ints_list.append(ints_)
+            sp_i += 1
+
+        dtype = imzml_parser.mzPrecision
+        mzs = np.concatenate(mzs_list)
+        by_mz = np.argsort(mzs)
+        sp_mz_int_buf = np.array([np.concatenate(sp_inds_list)[by_mz],
+                                  mzs[by_mz],
+                                  np.concatenate(ints_list)[by_mz]], dtype).T
+
+        chunk = pickle.dumps(sp_mz_int_buf)
+        size = sys.getsizeof(chunk)*(1/1024**2)
+        logger.debug(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
+        cos_client.put_object(Bucket=input_data["bucket"],
+                              Key=f'{input_data["ds_chunks"]}/{ch_i}.pickle',
+                              Body=chunk)
+        logger.debug(f'Spectra chunk {ch_i} finished')
+
+    pool = ThreadPool(128)
+    iterdata = [(ch_i, coord_chunk) for ch_i, coord_chunk in enumerate(coord_chunk_it)]
+    pool.map(_chunk_spectra, iterdata)
+    pool.close()
+    pool.join()
 
 
 def spectra_sample_gen(imzml_parser, sample_ratio=0.05):
@@ -37,61 +100,65 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     return ds_segments
 
 
-def segment_spectra_chunk(sp_mz_int_buf, mz_segments, ds_segments_path):
-    for segm_i, (l, r) in mz_segments:
-        segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
-        pd.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}.msgpack',
-                      sp_mz_int_buf[segm_start:segm_end],
-                      append=True)
-
-
-def segment_spectra(imzml_parser, coordinates, ds_segments, ds_segments_path):
-
-    def chunk_list(l, size=5000):
-        n = (len(l) - 1) // size + 1
-        for i in range(n):
-            yield l[size * i:size * (i + 1)]
-
-    logger.info(f'Segmenting dataset into {len(ds_segments)} segments')
-
-    rmtree(ds_segments_path, ignore_errors=True)
-    ds_segments_path.mkdir(parents=True)
+def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segments_bounds):
+    clean_segments(config, bucket, ds_segments_prefix)
+    logger.info(f'Segmenting chunks into {len(ds_segments_bounds)} segments')
 
     # extend boundaries of the first and last segments
     # to include all mzs outside of the spectra sample mz range
-    mz_segments = ds_segments.copy()
+    mz_segments = ds_segments_bounds.copy()
     mz_segments[0, 0] = 0
     mz_segments[-1, 1] = MAX_MZ_VALUE
     mz_segments = list(enumerate(mz_segments))
 
-    sp_id_to_idx = get_pixel_indices(coordinates)
+    def segment_spectra_chunk(bucket, key, data_stream, ibm_cos):
+        ch_i = int(key.split("/")[-1].split(".pickle")[0])
+        print(f'Segmenting spectra chunk {ch_i}')
+        sp_mz_int_buf = pickle.loads(data_stream.read())
 
-    chunk_size = 5000
-    coord_chunk_it = chunk_list(coordinates, chunk_size)
+        def _segment_spectra_chunk(args):
+            segm_i, (l, r) = args
+            segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
+            segm = sp_mz_int_buf[segm_start:segm_end]
+            if segm.size != 0:
+                ibm_cos.put_object(Bucket=bucket,
+                                   Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.pickle',
+                                   Body=pickle.dumps(segm))
 
-    sp_i = 0
-    sp_inds_list, mzs_list, ints_list = [], [], []
-    for ch_i, coord_chunk in enumerate(coord_chunk_it):
-        logger.debug(f'Segmenting spectra chunk {ch_i}')
+        pool = ThreadPool(128)
+        pool.map(_segment_spectra_chunk, mz_segments)
+        pool.close()
+        pool.join()
 
-        for x, y in coord_chunk:
-            mzs_, ints_ = imzml_parser.getspectrum(sp_i)
-            mzs_, ints_ = map(np.array, [mzs_, ints_])
-            sp_idx = sp_id_to_idx[sp_i]
-            sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
-            mzs_list.append(mzs_)
-            ints_list.append(ints_)
-            sp_i += 1
+    def merge_spectra_chunk_segments(results):
 
-        dtype = imzml_parser.mzPrecision
-        mzs = np.concatenate(mzs_list)
-        by_mz = np.argsort(mzs)
-        sp_mz_int_buf = np.array([np.concatenate(sp_inds_list)[by_mz],
-                                  mzs[by_mz],
-                                  np.concatenate(ints_list)[by_mz]], dtype).T
-        segment_spectra_chunk(sp_mz_int_buf, mz_segments, ds_segments_path)
+        def _merge(segm_i, ibm_cos):
+            print(f'Merging segment {segm_i} spectra chunks')
 
-        sp_inds_list, mzs_list, ints_list = [], [], []
+            objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{ds_segments_prefix}/chunk/{segm_i}/')
+            if 'Contents' in objs:
+                keys = [obj['Key'] for obj in objs['Contents']]
+
+                segm = []
+                for key in keys:
+                    segm_spectra_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+                    segm.append(segm_spectra_chunk)
+
+                segm = np.concatenate(segm)
+                ibm_cos.put_object(Bucket=bucket,
+                                   Key=f'{ds_segments_prefix}/{segm_i}.pickle',
+                                   Body=pickle.dumps(segm))
+
+                temp_formatted_keys = {'Objects': [{'Key': key} for key in keys]}
+                ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
+
+        pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
+        pw.map(_merge, range(len(mz_segments)))
+        pw.get_result()
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
+    pw.map_reduce(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}', merge_spectra_chunk_segments)
+    pw.get_result()
 
 
 def clip_centroids_df(centroids_df, mz_min, mz_max):
@@ -130,3 +197,12 @@ def segment_centroids(centr_df, segm_n, centr_segm_path):
         pd.to_msgpack(f'{centr_segm_path}/centr_segm_{segm_i:04}.msgpack', df)
 
 
+def clean_segments(config, bucket, segments_prefix):
+    cos_client = get_ibm_cos_client(config)
+    objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=segments_prefix)
+    while 'Contents' in objs:
+        logger.debug(f'Removing {objs["KeyCount"]} segments')
+        keys = [obj['Key'] for obj in objs['Contents']]
+        formatted_keys = {'Objects': [{'Key': key} for key in keys]}
+        cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
+        objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=segments_prefix)
