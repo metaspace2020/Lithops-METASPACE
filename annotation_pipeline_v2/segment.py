@@ -1,4 +1,3 @@
-from shutil import rmtree
 import numpy as np
 import pandas as pd
 import pickle
@@ -101,9 +100,6 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
 
 
 def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segments_bounds):
-    clean_segments(config, bucket, ds_segments_prefix)
-    logger.info(f'Segmenting chunks into {len(ds_segments_bounds)} segments')
-
     # extend boundaries of the first and last segments
     # to include all mzs outside of the spectra sample mz range
     mz_segments = ds_segments_bounds.copy()
@@ -161,15 +157,20 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
     pw.get_result()
 
 
-def clip_centroids_df(centroids_df, mz_min, mz_max):
+def clip_centroids_df(config, bucket, db_key, mz_min, mz_max):
+    cos_client = get_ibm_cos_client(config)
+    data_stream = cos_client.get_object(Bucket=bucket, Key=db_key)['Body']
+    centroids_df = pd.read_pickle(data_stream._raw_stream).sort_values('mz')
+    centroids_df = centroids_df[centroids_df.mz > 0]
+
     ds_mz_range_unique_formulas = centroids_df[(mz_min < centroids_df.mz) &
                                                (centroids_df.mz < mz_max)].index.unique()
     centr_df = centroids_df[centroids_df.index.isin(ds_mz_range_unique_formulas)].reset_index().copy()
     return centr_df
 
 
-def calculate_centroids_segments_n(centr_df, ds_segments, ds_segm_size_mb):
-    ds_size_mb = len(ds_segments) * ds_segm_size_mb
+def calculate_centroids_segments_n(centr_df, ds_segm_n, ds_segm_size_mb):
+    ds_size_mb = ds_segm_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
     peaks_per_centr_segm = 1e4
     centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb,
@@ -178,12 +179,7 @@ def calculate_centroids_segments_n(centr_df, ds_segments, ds_segm_size_mb):
     return centr_segm_n
 
 
-def segment_centroids(centr_df, segm_n, centr_segm_path):
-    logger.info(f'Segmenting centroids into {segm_n} segments')
-
-    rmtree(centr_segm_path, ignore_errors=True)
-    centr_segm_path.mkdir(parents=True)
-
+def segment_centroids(config, bucket, centr_df, segm_n, centr_segm_prefix):
     first_peak_df = centr_df[centr_df.peak_i == 0].copy()
     segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n)]
     segm_lower_bounds = list(np.quantile(first_peak_df.mz, q) for q in segm_bounds_q)
@@ -193,16 +189,27 @@ def segment_centroids(centr_df, segm_n, centr_segm_path):
 
     centr_segm_df = pd.merge(centr_df, first_peak_df[['formula_i', 'segm_i']],
                              on='formula_i').sort_values('mz')
-    for segm_i, df in centr_segm_df.groupby('segm_i'):
-        pd.to_msgpack(f'{centr_segm_path}/centr_segm_{segm_i:04}.msgpack', df)
+    cos_client = get_ibm_cos_client(config)
+
+    def upload_db_segment(args):
+        segm_i = args[0]
+        df = args[1]
+        cos_client.put_object(Bucket=bucket,
+                              Key=f'{centr_segm_prefix}/{segm_i}.pickle',
+                              Body=pickle.dumps(df))
+
+    pool = ThreadPool(128)
+    pool.map(upload_db_segment, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
+    pool.close()
+    pool.join()
 
 
 def clean_segments(config, bucket, segments_prefix):
     cos_client = get_ibm_cos_client(config)
     objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=segments_prefix)
     while 'Contents' in objs:
-        logger.debug(f'Removing {objs["KeyCount"]} segments')
         keys = [obj['Key'] for obj in objs['Contents']]
         formatted_keys = {'Objects': [{'Key': key} for key in keys]}
         cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
+        logger.debug(f'Removed {objs["KeyCount"]} segments from {segments_prefix}')
         objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=segments_prefix)
