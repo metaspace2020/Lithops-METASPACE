@@ -24,10 +24,21 @@ def get_ibm_cos_client(config):
 
 
 def upload_to_cos(cos_client, src, target_bucket, target_key):
-    print('Copying from {} to {}/{}'.format(src, target_bucket, target_key))
+    logger.info('Copying from {} to {}/{}'.format(src, target_bucket, target_key))
     with open(src, "rb") as fp:
         cos_client.put_object(Bucket=target_bucket, Key=target_key, Body=fp)
-    print('Copy completed for {}/{}'.format(target_bucket, target_key))
+    logger.info('Copy completed for {}/{}'.format(target_bucket, target_key))
+
+
+def clean_from_cos(config, bucket, prefix):
+    cos_client = get_ibm_cos_client(config)
+    objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    while 'Contents' in objs:
+        keys = [obj['Key'] for obj in objs['Contents']]
+        formatted_keys = {'Objects': [{'Key': key} for key in keys]}
+        cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
+        logger.debug(f'Removed {objs["KeyCount"]} objects from {prefix}')
+        objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
 
 
 def ds_imzml_path(ds_data_path):
