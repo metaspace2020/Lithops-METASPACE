@@ -5,6 +5,7 @@ from shutil import rmtree
 from pyimzml.ImzMLParser import ImzMLParser
 import pandas as pd
 
+from annotation_pipeline_v2.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline_v2.image import create_process_segment
 from annotation_pipeline_v2.segment import define_ds_segments, segment_spectra
 from annotation_pipeline_v2.segment import clip_centroids_df, calculate_centroids_segments_n, segment_centroids
@@ -14,7 +15,8 @@ from annotation_pipeline_v2.utils import logger
 
 class Pipeline(object):
 
-    def __init__(self, input_config):
+    def __init__(self, config, input_config):
+        self.config = config
         self.input_data = input_config['dataset']
         self.input_db = input_config['molecular_db']
         self.ds_segments_path = Path(self.input_data['ds_segments'])
@@ -64,6 +66,13 @@ class Pipeline(object):
 
         formula_metrics_list = [process_centr_segment(i) for i in range(self.centr_segm_n)]
 
-        formula_metrics_df = pd.concat(formula_metrics_list)
-        logger.info(f'Metrics calculated: {formula_metrics_df.shape[0]}')
-        return formula_metrics_df
+        self.formula_metrics_df = pd.concat(formula_metrics_list)
+        logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
+
+        return self.formula_metrics_df
+
+    def run_fdr(self):
+        self.rankings_df = build_fdr_rankings(self.config, self.input_data, self.input_db, self.formula_metrics_df)
+        self.fdrs = calculate_fdrs(self.config, self.input_data, self.rankings_df)
+        self.annotations_df = self.formula_metrics_df.merge(self.fdrs, how='left', left_index=True, right_index=True)
+        return self.annotations_df

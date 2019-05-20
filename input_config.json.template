@@ -4,7 +4,9 @@
     "path": "metabolomics/input",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "centr_segments": "metabolomics/tmp/centr_segments",
-    "formula_images": "metabolomics/tmp/formula_images"
+    "formula_images": "metabolomics/tmp/formula_images",
+    "fdr_rankings": "metabolomics/input/fdr",
+    "num_decoys": 20
   },
   "molecular_db": {
     "bucket": "****",

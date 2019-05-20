@@ -124,6 +124,12 @@ def build_database(config, input_db, n_formula_chunks=256):
         formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
         formulas.index.name = 'formula_i'
 
+        ibm_cos.put_object(Bucket=input_db['bucket'], Key=f'{input_db["formulas_chunks"]}/formula_to_id.pickle',
+                           Body=pickle.dumps(dict(zip(formulas.formula, formulas.index))))
+
+        ibm_cos.put_object(Bucket=input_db['bucket'], Key=f'{input_db["formulas_chunks"]}/id_to_formula.pickle',
+                           Body=pickle.dumps(formulas.formula.to_dict()))
+
         num_chunks = min(len(formulas), n_formula_chunks)
         chunk_keys = []
 
@@ -152,6 +158,21 @@ def build_database(config, input_db, n_formula_chunks=256):
     pw.clean()
 
     return num_formulas, formula_chunk_keys
+
+
+def get_formula_id_dfs(config, input_db):
+    ibm_cos = ibm_boto3.client(service_name='s3',
+                               ibm_api_key_id=config['ibm_cos']['api_key'],
+                               config=Config(signature_version='oauth'),
+                               endpoint_url=config['ibm_cos']['endpoint'])
+    formula_to_id = pickle.loads(ibm_cos.get_object(Bucket=input_db['bucket'],
+                                                    Key=f'{input_db["formulas_chunks"]}/formula_to_id.pickle'
+                                                    )['Body'].read())
+    id_to_formula = pickle.loads(ibm_cos.get_object(Bucket=input_db['bucket'],
+                                                    Key=f'{input_db["formulas_chunks"]}/id_to_formula.pickle'
+                                                    )['Body'].read())
+
+    return formula_to_id, id_to_formula
 
 
 def clean_formula_chunks(config, input_db, formula_chunk_keys):
