@@ -1,4 +1,5 @@
 import json
+import pickle
 from pathlib import Path
 from shutil import rmtree
 
@@ -69,10 +70,25 @@ class Pipeline(object):
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
 
-        return self.formula_metrics_df
-
     def run_fdr(self):
         self.rankings_df = build_fdr_rankings(self.config, self.input_data, self.input_db, self.formula_metrics_df)
         self.fdrs = calculate_fdrs(self.config, self.input_data, self.rankings_df)
-        self.annotations_df = self.formula_metrics_df.merge(self.fdrs, how='left', left_index=True, right_index=True)
-        return self.annotations_df
+
+        logger.info(f'Number of annotations at with FDR less than:')
+        for fdr_step in [0.05, 0.1, 0.2, 0.5]:
+            logger.info(f'{fdr_step*100:2.0f}%: {(self.fdrs.fdr < fdr_step).sum()}')
+
+    def get_results(self):
+        results_df = self.formula_metrics_df.merge(self.fdrs, left_index=True, right_index=True)
+        results_df = results_df[~results_df.adduct.isna()]
+        results_df = results_df.sort_values('fdr')
+        self.results_df = results_df
+        return results_df
+
+    def get_images(self):
+        images = {}
+        for segm_i in range(self.centr_segm_n):
+            segm_images = pickle.load(open(self.formula_images_path / f'images_{segm_i}.pickle', 'rb'))
+            images.update(segm_images)
+
+        return dict((formula_i, images[formula_i]) for formula_i in self.results_df.index)

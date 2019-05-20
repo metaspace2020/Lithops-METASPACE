@@ -49,7 +49,7 @@ def store_centroids_database(config, input_db):
     return centroids_shape, centroids_head
 
 
-def calculate_centroids(config, input_db, formula_chunk_keys):
+def calculate_centroids(config, input_db, formula_chunk_keys, isocalc_sigma=0.001238):
     def calculate_peaks_for_formula(formula_i, formula):
         mzs, ints = isocalc_wrapper.centroids(formula)
         if mzs is not None:
@@ -58,22 +58,14 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
             return []
 
     def calculate_peaks_for_chunk(key, data_stream):
-        chunk_df = pd.read_pickle(data_stream, None)
+        chunk_df = pickle.loads(data_stream.read())
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         return peaks_df
 
-    def calculate_peaks_for_chunk_local(chunk_key, i):
-        print(i, 'out of', len(formula_chunk_keys))
-        chunk_df = pickle.loads(ibm_cos.get_object(Bucket=input_db["bucket"], Key=chunk_key)['Body'].read())
-        peaks = [peak for formula_i, formula in chunk_df.formula.items()
-                      for peak in calculate_peaks_for_formula(formula_i, formula)]
-        peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
-        return peaks_df
-
-    def merge_chunks_and_store(chunks, ibm_cos):
-        centroids_df = pd.concat(chunks).set_index('formula_i')
+    def merge_chunks_and_store(results, ibm_cos):
+        centroids_df = pd.concat(results).set_index('formula_i')
         ibm_cos.put_object(Bucket=input_db['bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
         return centroids_df.shape, centroids_df.head(8)
 
@@ -85,23 +77,14 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
             'polarity': '+',
             'n_charges': 1,
         },
-        'isocalc_sigma': 0.001238
+        'isocalc_sigma': isocalc_sigma
     })
 
-    if False:
-        # TODO: Switch to this pywren codepath when cpyMSpec is in the runtime
-        pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-        iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
-        futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
-        centroids_shape, centroids_head = pw.get_result(futures)
-        pw.clean()
-    else:
-        ibm_cos = get_cos_client(config)
-
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=(os.cpu_count() or 1)) as ex:
-            all_chunks = list(ex.map(calculate_peaks_for_chunk_local, formula_chunk_keys, range(len(formula_chunk_keys))))
-        centroids_shape, centroids_head = merge_chunks_and_store(all_chunks, ibm_cos)
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
+    futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
+    centroids_shape, centroids_head = pw.get_result(futures)
+    pw.clean()
 
     return centroids_shape, centroids_head
 
