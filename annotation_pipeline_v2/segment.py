@@ -5,6 +5,7 @@ import sys
 from .utils import logger, get_pixel_indices, get_ibm_cos_client
 from multiprocessing.pool import ThreadPool
 import pywren_ibm_cloud as pywren
+import msgpack_numpy as msgpack
 
 ISOTOPIC_PEAK_N = 4
 MAX_MZ_VALUE = 10**5
@@ -30,7 +31,7 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         sp_i_lower_bounds.append(sp_i_bound)
         sp_i_bound += chunk_size
 
-    logger.debug(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
+    logger.info(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
 
     def _chunk_spectra(args):
         ch_i, coord_chunk = args
@@ -60,7 +61,7 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         cos_client.put_object(Bucket=input_data["bucket"],
                               Key=f'{input_data["ds_chunks"]}/{ch_i}.pickle',
                               Body=chunk)
-        logger.debug(f'Spectra chunk {ch_i} finished')
+        logger.info(f'Spectra chunk {ch_i} finished')
 
     pool = ThreadPool(128)
     iterdata = [(ch_i, coord_chunk) for ch_i, coord_chunk in enumerate(coord_chunk_it)]
@@ -117,8 +118,8 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
             segm = sp_mz_int_buf[segm_start:segm_end]
             if segm.size != 0:
                 ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.pickle',
-                                   Body=pickle.dumps(segm))
+                                   Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
+                                   Body=msgpack.dumps(segm))
 
         pool = ThreadPool(128)
         pool.map(_segment_spectra_chunk, mz_segments)
@@ -136,13 +137,13 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
 
                 segm = []
                 for key in keys:
-                    segm_spectra_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+                    segm_spectra_chunk = msgpack.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
                     segm.append(segm_spectra_chunk)
 
                 segm = np.concatenate(segm)
                 ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{ds_segments_prefix}/{segm_i}.pickle',
-                                   Body=pickle.dumps(segm))
+                                   Key=f'{ds_segments_prefix}/{segm_i}.msgpack',
+                                   Body=msgpack.dumps(segm))
 
                 temp_formatted_keys = {'Objects': [{'Key': key} for key in keys]}
                 ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
@@ -195,8 +196,8 @@ def segment_centroids(ds_bucket, db_segm_n, centr_segm_prefix, ibm_cos):
     def upload_db_segment(args):
         segm_i, df = args
         ibm_cos.put_object(Bucket=ds_bucket,
-                           Key=f'{centr_segm_prefix}/{segm_i}.pickle',
-                           Body=pickle.dumps(df))
+                           Key=f'{centr_segm_prefix}/{segm_i}.msgpack',
+                           Body=df.to_msgpack())
 
     pool = ThreadPool(128)
     print("Segmenting centroids")
