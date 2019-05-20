@@ -33,10 +33,8 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
 
     logger.info(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
 
-    def _chunk_spectra(args):
-        ch_i, coord_chunk = args
-
-        logger.debug(f'Parsing spectra chunk {ch_i}')
+    for ch_i, coord_chunk in enumerate(coord_chunk_it):
+        logger.info(f'Parsing spectra chunk {ch_i}')
         sp_i = sp_i_lower_bounds[ch_i]
         sp_inds_list, mzs_list, ints_list = [], [], []
         for x, y in coord_chunk:
@@ -55,19 +53,13 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
                                   mzs[by_mz],
                                   np.concatenate(ints_list)[by_mz]], dtype).T
 
-        chunk = pickle.dumps(sp_mz_int_buf)
+        chunk = msgpack.dumps(sp_mz_int_buf)
         size = sys.getsizeof(chunk)*(1/1024**2)
-        logger.debug(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
+        logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
         cos_client.put_object(Bucket=input_data["bucket"],
-                              Key=f'{input_data["ds_chunks"]}/{ch_i}.pickle',
+                              Key=f'{input_data["ds_chunks"]}/{ch_i}.msgpack',
                               Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
-
-    pool = ThreadPool(128)
-    iterdata = [(ch_i, coord_chunk) for ch_i, coord_chunk in enumerate(coord_chunk_it)]
-    pool.map(_chunk_spectra, iterdata)
-    pool.close()
-    pool.join()
 
 
 def spectra_sample_gen(imzml_parser, sample_ratio=0.05):
@@ -108,9 +100,9 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
     mz_segments = list(enumerate(mz_segments))
 
     def segment_spectra_chunk(bucket, key, data_stream, ibm_cos):
-        ch_i = int(key.split("/")[-1].split(".pickle")[0])
+        ch_i = int(key.split("/")[-1].split(".msgpack")[0])
         print(f'Segmenting spectra chunk {ch_i}')
-        sp_mz_int_buf = pickle.loads(data_stream.read())
+        sp_mz_int_buf = msgpack.loads(data_stream.read())
 
         def _segment_spectra_chunk(args):
             segm_i, (l, r) = args
