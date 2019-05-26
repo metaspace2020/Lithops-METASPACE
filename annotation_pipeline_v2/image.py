@@ -2,7 +2,7 @@ import pickle
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
-from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
 from .utils import ds_dims, get_pixel_indices
@@ -49,11 +49,9 @@ def read_ds_segments(ds_bucket, ds_segments_prefix, first_segm_i, last_segm_i, i
             sp_arr = data
         return sp_arr
 
-    pool = ThreadPool(128)
-    ds_segm_keys = [f'{ds_segments_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
-    sp_arr = pool.map(read_ds_segment, ds_segm_keys)
-    pool.close()
-    pool.join()
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        ds_segm_keys = [f'{ds_segments_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
+        sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
 
     sp_arr = [a for a in sp_arr if a.shape[0] > 0]
     if len(sp_arr) > 0:
@@ -72,11 +70,12 @@ def make_sample_area_mask(coordinates):
     return sample_area_mask.reshape(nrows, ncols)
 
 
-def choose_ds_segments(ds_segm_n, ds_segments_bounds, centr_df, ppm):
+def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
     centr_segm_min_mz, centr_segm_max_mz = centr_df.mz.agg([np.min, np.max])
     centr_segm_min_mz -= centr_segm_min_mz * ppm * 1e-6
     centr_segm_max_mz += centr_segm_max_mz * ppm * 1e-6
 
+    ds_segm_n = len(ds_segments_bounds)
     first_ds_segm_i = np.searchsorted(ds_segments_bounds[:, 0], centr_segm_min_mz, side='right') - 1
     first_ds_segm_i = max(0, first_ds_segm_i)
     last_ds_segm_i = np.searchsorted(ds_segments_bounds[:, 1], centr_segm_max_mz, side='left')  # last included
@@ -85,7 +84,7 @@ def choose_ds_segments(ds_segm_n, ds_segments_bounds, centr_df, ppm):
 
 
 def create_process_segment(ds_bucket, ds_segments_prefix, output_bucket, formula_images_prefix,
-                           ds_segm_n, ds_segments_bounds, coordinates, image_gen_config):
+                           ds_segments_bounds, coordinates, image_gen_config):
     sample_area_mask = make_sample_area_mask(coordinates)
     nrows, ncols = ds_dims(coordinates)
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
@@ -96,7 +95,7 @@ def create_process_segment(ds_bucket, ds_segments_prefix, output_bucket, formula
         print(f'Reading centroids segment {segm_i} from {key}')
         centr_df = pd.read_msgpack(data_stream._raw_stream)
 
-        first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segm_n, ds_segments_bounds, centr_df, ppm)
+        first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
         # (ds_bucket, ds_segments_prefix, first_segm_i, last_segm_i, ibm_cos):
         sp_arr = read_ds_segments(ds_bucket, ds_segments_prefix, first_ds_segm_i, last_ds_segm_i, ibm_cos)

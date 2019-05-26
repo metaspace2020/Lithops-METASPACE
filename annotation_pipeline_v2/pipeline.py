@@ -70,7 +70,7 @@ class Pipeline(object):
 
         process_centr_segment = create_process_segment(self.input_data["bucket"], self.input_data["ds_segments"],
                                                        self.output["bucket"], self.output["formula_images"],
-                                                       self.ds_segm_n, self.ds_segments_bounds, self.coordinates, self.image_gen_config)
+                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config)
 
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=1024)
         pw.map(process_centr_segment, f'{self.input_db["bucket"]}/{self.input_db["centroids_segments"]}')

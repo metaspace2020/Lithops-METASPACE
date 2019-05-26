@@ -3,7 +3,7 @@ import pandas as pd
 import pickle
 import sys
 from .utils import logger, get_pixel_indices, get_ibm_cos_client
-from multiprocessing.pool import ThreadPool
+from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import msgpack_numpy as msgpack
 
@@ -32,6 +32,7 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         sp_i_bound += chunk_size
 
     logger.info(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
+    keys = [f'{input_data["ds_chunks"]}/{ch_i}.msgpack' for ch_i in range(len(sp_i_lower_bounds))]
 
     for ch_i, coord_chunk in enumerate(coord_chunk_it):
         logger.info(f'Parsing spectra chunk {ch_i}')
@@ -57,9 +58,11 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         size = sys.getsizeof(chunk)*(1/1024**2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
         cos_client.put_object(Bucket=input_data["bucket"],
-                              Key=f'{input_data["ds_chunks"]}/{ch_i}.msgpack',
+                              Key=keys[ch_i],
                               Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
+
+    return keys
 
 
 def spectra_sample_gen(imzml_parser, sample_ratio=0.05):
@@ -113,10 +116,8 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
                                    Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
                                    Body=msgpack.dumps(segm))
 
-        pool = ThreadPool(128)
-        pool.map(_segment_spectra_chunk, mz_segments)
-        pool.close()
-        pool.join()
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            pool.map(_segment_spectra_chunk, mz_segments)
 
     def merge_spectra_chunk_segments(results):
 
@@ -190,8 +191,6 @@ def segment_centroids(ds_bucket, db_segm_n, centr_segm_prefix, ibm_cos):
                            Key=f'{centr_segm_prefix}/{segm_i}.msgpack',
                            Body=df.to_msgpack())
 
-    pool = ThreadPool(128)
     print("Segmenting centroids")
-    pool.map(upload_db_segment, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
-    pool.close()
-    pool.join()
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        pool.map(upload_db_segment, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
