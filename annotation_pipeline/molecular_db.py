@@ -49,7 +49,7 @@ def store_centroids_database(config, input_db):
     return centroids_shape, centroids_head
 
 
-def calculate_centroids(config, input_db, formula_chunk_keys):
+def calculate_centroids(config, input_db, formula_chunk_keys, use_pywren=True):
     def calculate_peaks_for_formula(formula_i, formula):
         mzs, ints = isocalc_wrapper.centroids(formula)
         if mzs is not None:
@@ -58,7 +58,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
             return []
 
     def calculate_peaks_for_chunk(key, data_stream):
-        chunk_df = pd.read_pickle(data_stream, None)
+        chunk_df = pd.read_pickle(data_stream._raw_stream, None)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
@@ -72,8 +72,8 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         return peaks_df
 
-    def merge_chunks_and_store(chunks, ibm_cos):
-        centroids_df = pd.concat(chunks).set_index('formula_i')
+    def merge_chunks_and_store(results, ibm_cos):
+        centroids_df = pd.concat(results).set_index('formula_i')
         ibm_cos.put_object(Bucket=input_db['bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
         return centroids_df.shape, centroids_df.head(8)
 
@@ -88,8 +88,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys):
         'isocalc_sigma': 0.001238
     })
 
-    if False:
-        # TODO: Switch to this pywren codepath when cpyMSpec is in the runtime
+    if use_pywren:
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
         iterdata = [f'{input_db["bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
         futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
