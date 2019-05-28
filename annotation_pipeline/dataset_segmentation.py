@@ -15,7 +15,7 @@ def generate_segm_intervals(config, input_db, segm_n):
         return segm_intervals
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-    iterdata = [f'{input_db["bucket"]}/{input_db["centroids_pandas"]}']
+    iterdata = [f'{config["storage"]["db_bucket"]}/{input_db["centroids_pandas"]}']
     pw.map(get_segm_intervals, iterdata)
     segm_intervals = pw.get_result()
     pw.clean()
@@ -34,13 +34,13 @@ def split_spectra_into_segments(config, input_data, segm_n, segm_intervals):
 
     def store_segm(key, data_stream, ibm_cos, segm_i, interval):
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-        iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', *interval]]
+        iterdata = [[f'{config["storage"]["ds_bucket"]}/{input_data["ds"]}', *interval]]
         pw.map_reduce(iterate_over_segment, iterdata, reduce_chunks, chunk_size=64*1024**2)
         segm_spectra = pickle.dumps(np.array(pw.get_result()))
-        ibm_cos.put_object(Bucket=input_data["bucket"], Key=f'{input_data["segments"]}/{segm_i}.pickle', Body=segm_spectra)
+        ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"], Key=f'{input_data["segments"]}/{segm_i}.pickle', Body=segm_spectra)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=256)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', segm_i, segm_intervals[segm_i]] for segm_i in range(segm_n)]
+    iterdata = [[f'{config["storage"]["ds_bucket"]}/{input_data["ds"]}', segm_i, segm_intervals[segm_i]] for segm_i in range(segm_n)]
     futures = pw.map(store_segm, iterdata)
     pw.get_result(futures)
     pw.clean()
@@ -51,7 +51,7 @@ def clean_segments(config, input_data):
         ibm_cos.delete_object(Bucket=bucket, Key=key)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=256)
-    data_stream = f'{input_data["bucket"]}/{input_data["segments"]}'
+    data_stream = f'{config["storage"]["ds_bucket"]}/{input_data["segments"]}'
     pw.map(clean_segments_datasets, data_stream)
     pw.get_result()
     pw.clean()

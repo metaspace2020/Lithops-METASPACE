@@ -57,7 +57,7 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         chunk = msgpack.dumps(sp_mz_int_buf)
         size = sys.getsizeof(chunk)*(1/1024**2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        cos_client.put_object(Bucket=input_data["bucket"],
+        cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
                               Key=keys[ch_i],
                               Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
@@ -111,10 +111,9 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
             segm_i, (l, r) = args
             segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
             segm = sp_mz_int_buf[segm_start:segm_end]
-            if segm.size != 0:
-                ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
-                                   Body=msgpack.dumps(segm))
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
+                               Body=msgpack.dumps(segm))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_segment_spectra_chunk, mz_segments)

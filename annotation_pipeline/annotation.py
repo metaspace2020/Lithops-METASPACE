@@ -92,7 +92,7 @@ def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows,
 
         if not os.path.isfile('/tmp/centroids.pickle'):
             print("Read centroids DB from IBM COS")
-            ibm_cos.download_file(input_db["bucket"], input_db['centroids_pandas'], '/tmp/centroids.pickle')
+            ibm_cos.download_file(config["storage"]["db_bucket"], input_db['centroids_pandas'], '/tmp/centroids.pickle')
 
         with open('/tmp/centroids.pickle', 'rb') as centroids:
             centroids_df = pickle.load(centroids)
@@ -107,7 +107,7 @@ def annotate_spectra(config, input_data, input_db, segm_n, pixel_indices, nrows,
     empty_image = np.zeros((nrows, ncols))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    iterdata = [f'{input_data["bucket"]}/{input_data["segments"]}/{segm_i}.pickle' for segm_i in range(segm_n)]
+    iterdata = [f'{config["storage"]["ds_bucket"]}/{input_data["segments"]}/{segm_i}.pickle' for segm_i in range(segm_n)]
     pw.map(annotate_segm_spectra, iterdata)
     results = pw.get_result()
     pw.clean()
