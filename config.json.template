@@ -12,5 +12,10 @@
   "pywren": {
     "storage_bucket": "****",
     "runtime": "ibmfunctions/pywren-metabolomics:3.6"
+  },
+  "storage": {
+    "ds_bucket": "****",
+    "db_bucket": "****",
+    "output_bucket": "****"
   }
 }

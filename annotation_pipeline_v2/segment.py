@@ -57,7 +57,7 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         chunk = msgpack.dumps(sp_mz_int_buf)
         size = sys.getsizeof(chunk)*(1/1024**2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        cos_client.put_object(Bucket=input_data["bucket"],
+        cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
                               Key=keys[ch_i],
                               Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')

@@ -1,11 +1,11 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/****",
+    "path": "metabolomics/ds/Brain02_Bregma1-42_02",
     "ds_chunks": "metabolomics/tmp/ds_chunks",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
-    "isocalc_sigma": 0.00123792863514
+    "isocalc_sigma": 0.000693240035678
   },
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas",
@@ -13,12 +13,10 @@
     "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
-      "metabolomics/db/mol_db2.pickle",
-      "metabolomics/db/mol_db3.pickle",
-      "metabolomics/db/mol_db4.pickle"
+      "metabolomics/db/mol_db2.pickle"
     ],
-    "adducts": ["","+H","+Na","+K"],
-    "modifiers": ["", "-H2O", "-CO2", "-NH3"]
+    "adducts": ["","+H"],
+    "modifiers": ["", "-H2O"]
   },
   "output": {
     "formula_images": "metabolomics/tmp/formula_images"

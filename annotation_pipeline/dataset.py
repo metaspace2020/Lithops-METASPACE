@@ -30,7 +30,7 @@ def parse_spectrum_line(s):
 
 def read_dataset_spectra(config, input_data):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds"]}', parse_spectrum_line]]
+    iterdata = [[f'{config["storage"]["ds_bucket"]}/{input_data["ds"]}', parse_spectrum_line]]
     # NOTE: we need to be absolutely sure that using chunk_size doesn't split a line into separate chunks
     pw.map_reduce(parse_txt, iterdata, reduce_chunks, chunk_size=64*1024**2)
     spectra = pw.get_result()
@@ -45,7 +45,7 @@ def read_dataset_coords(config, input_data):
         return sp_i, x, y
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=128)
-    iterdata = [[f'{input_data["bucket"]}/{input_data["ds_coord"]}', parse_spectrum_coord]]
+    iterdata = [[f'{config["storage"]["ds_bucket"]}/{input_data["ds_coord"]}', parse_spectrum_coord]]
     pw.map(parse_txt, iterdata)
     spectra_coords = pw.get_result()
     pw.clean()

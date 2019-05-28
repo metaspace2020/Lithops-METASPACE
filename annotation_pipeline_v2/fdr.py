@@ -20,7 +20,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
         formula_to_id = pickle.loads(data_stream.read())
-        mols = pickle.loads(ibm_cos.get_object(Bucket=input_db["bucket"], Key=database)['Body'].read())
+        mols = pickle.loads(ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=database)['Body'].read())
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -42,10 +42,10 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             ranking_df = ranking_df[~ranking_df.msm.isna()]
             key = f'{input_data["fdr_rankings"]}/{group_i}/decoy{ranking_i}.pickle'
 
-        ibm_cos.put_object(Bucket=input_data["bucket"], Key=key, Body=pickle.dumps(ranking_df))
+        ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"], Key=key, Body=pickle.dumps(ranking_df))
         return job_i, key
 
-    formula_to_id_path = f'{input_db["bucket"]}/{input_db["formulas_chunks"]}/formula_to_id.pickle'
+    formula_to_id_path = f'{config["storage"]["db_bucket"]}/{input_db["formulas_chunks"]}/formula_to_id.pickle'
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
     n_decoy_rankings = input_data.get('num_decoys', len(decoy_adducts))
     msm_lookup = formula_scores_df.msm.to_dict() # Ideally this data would stay in COS so it doesn't have to be reuploaded
@@ -93,9 +93,9 @@ def calculate_fdrs(config, input_data, rankings_df):
         return mols.groupby('formula_i').agg({'fdr': np.nanmedian, 'mol': 'first'})
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    data_bucket = input_data['bucket']
+    data_bucket = config['storage']['ds_bucket']
 
-    if False:
+    if True:
         # !! Disabled this branch because PyWren seems to stop receiving results after the first map_reduce task
         # The map part of the map-reduce is pretty simple - possibly grouping everything into a single task per group would be better
 

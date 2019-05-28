@@ -21,4 +21,4 @@ if __name__ == '__main__':
         for root, dirnames, filenames in os.walk(path):
             for fn in filenames:
                 f_path = f'{root}/{fn}'
-                upload_to_cos(cos_client, f_path, input_config['dataset']['bucket'], f_path)
+                upload_to_cos(cos_client, f_path, config['storage']['ds_bucket'], f_path)
