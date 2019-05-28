@@ -20,5 +20,6 @@ setup(name='pywren-annotation-pipeline',
           "pyMSpec==0.1.2",
           "cpyMSpec==0.4.2",
           "pyimzML==1.2.5",
-          "requests"
+          "requests",
+          "msgpack-numpy"
       ])

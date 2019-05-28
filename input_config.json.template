@@ -1,11 +1,10 @@
 {
   "dataset": {
     "bucket": "****",
-    "path": "metabolomics/input",
+    "path": "metabolomics/ds/****",
+    "ds_chunks": "metabolomics/tmp/ds_chunks",
     "ds_segments": "metabolomics/tmp/ds_segments",
-    "centr_segments": "metabolomics/tmp/centr_segments",
-    "formula_images": "metabolomics/tmp/formula_images",
-    "fdr_rankings": "metabolomics/input/fdr",
+    "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "isocalc_sigma": 0.00123792863514
   },
@@ -13,6 +12,7 @@
     "bucket": "****",
     "formulas_chunks": "metabolomics/db/formulas",
     "centroids_pandas": "metabolomics/db/centroids.pickle",
+    "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
       "metabolomics/db/mol_db2.pickle",
@@ -21,5 +21,9 @@
     ],
     "adducts": ["","+H","+Na","+K"],
     "modifiers": ["", "-H2O", "-CO2", "-NH3"]
+  },
+  "output": {
+    "bucket": "****",
+    "formula_images": "metabolomics/tmp/formula_images"
   }
 }

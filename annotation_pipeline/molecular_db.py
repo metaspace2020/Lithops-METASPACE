@@ -58,7 +58,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys, isocalc_sigma=0.00
             return []
 
     def calculate_peaks_for_chunk(key, data_stream):
-        chunk_df = pickle.loads(data_stream.read())
+        chunk_df = pd.read_pickle(data_stream._raw_stream, None)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
