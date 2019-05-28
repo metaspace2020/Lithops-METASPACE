@@ -75,7 +75,7 @@ class Pipeline(object):
                                                        self.config["storage"]["output_bucket"], self.output["formula_images"],
                                                        self.ds_segments_bounds, self.coordinates, self.image_gen_config)
 
-        pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=1024)
+        pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
         pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
         formula_metrics_list = pw.get_result()
 
@@ -104,7 +104,7 @@ class Pipeline(object):
             obj = ibm_cos.get_object(Bucket=self.config['storage']['output_bucket'],
                                      Key=f'{self.output["formula_images"]}/{segm_i}.pickle')
 
-            segm_images = pickle.load(obj['Body'])
+            segm_images = pickle.loads(obj['Body'].read())
             images.update(segm_images)
 
         return dict((formula_i, images[formula_i]) for formula_i in self.results_df.index)

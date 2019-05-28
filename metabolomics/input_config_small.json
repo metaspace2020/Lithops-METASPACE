@@ -5,6 +5,7 @@
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
+    "polarity": "+",
     "isocalc_sigma": 0.000693240035678
   },
   "molecular_db": {

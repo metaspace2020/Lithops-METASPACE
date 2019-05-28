@@ -72,9 +72,9 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
 
 def calculate_fdrs(config, input_data, rankings_df):
 
-    def run_ranking(key, data_stream, ibm_cos, decoy_bucket, decoy_key):
-        target = pickle.loads(data_stream.read())
-        decoy = pickle.loads(ibm_cos.get_object(Bucket=decoy_bucket, Key=decoy_key)['Body'].read())
+    def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
+        target = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=target_key)['Body'].read())
+        decoy = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=decoy_key)['Body'].read())
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()
@@ -88,60 +88,31 @@ def calculate_fdrs(config, input_data, rankings_df):
         target_fdrs = target_fdrs.sort_index()
         return target_fdrs
 
-    def merge_rankings(results):
-        mols = pd.concat(results).rename_axis('formula_i').reset_index()
-        return mols.groupby('formula_i').agg({'fdr': np.nanmedian, 'mol': 'first'})
+    def merge_rankings(ibm_cos, data_bucket, target_row, decoy_keys):
+        rankings = [run_ranking(ibm_cos, data_bucket, target_row.key, decoy_key) for decoy_key in decoy_keys]
+        mols = (pd.concat(rankings)
+                .rename_axis('formula_i')
+                .reset_index()
+                .groupby('formula_i')
+                .agg({'fdr': np.nanmedian, 'mol': 'first'})
+                .assign(database_path=target_row.database_path,
+                        adduct=target_row.adduct,
+                        modifier=target_row.modifier))
+        return mols
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     data_bucket = config['storage']['ds_bucket']
 
-    if True:
-        # !! Disabled this branch because PyWren seems to stop receiving results after the first map_reduce task
-        # The map part of the map-reduce is pretty simple - possibly grouping everything into a single task per group would be better
+    ranking_jobs = []
+    for group_i, group in rankings_df.groupby('group_i'):
+        target_rows = group[group.is_target]
+        decoy_rows = group[~group.is_target]
 
-        # Run a separate map-reduce task for each independent set of rankings
-        ranking_futures = []
-        for group_i, group in rankings_df.groupby('group_i'):
-            target_rows = group[group.is_target]
-            decoy_rows = group[~group.is_target]
+        for i, target_row in target_rows.iterrows():
+            ranking_jobs.append([data_bucket, target_row, decoy_rows.key.tolist()])
 
-            for i, target_row in target_rows.iterrows():
-                iterdata = [(f'{data_bucket}/{target_row.key}', data_bucket, decoy_row.key)
-                            for i, decoy_row in decoy_rows.iterrows()]
-                futures = pw.map_reduce(run_ranking, iterdata, merge_rankings)
-                ranking_futures.append((target_row, futures))
-
-        # Get & concat results
-        fdr_dfs = []
-        for target_row, futures in ranking_futures:
-            results = pw.get_result(futures)
-            print(results)
-            result_df = pd.DataFrame({'database_path': target_row.database_path,
-                                      'mol': results.mol,
-                                      'adduct': target_row.adduct,
-                                      'modifier': target_row.modifier,
-                                      'fdr': results.fdr},
-                                     index=results.index)
-            fdr_dfs.append(result_df)
-    else:
-        fdr_dfs = []
-        for group_i, group in rankings_df.groupby('group_i'):
-            target_rows = group[group.is_target]
-            decoy_rows = group[~group.is_target]
-
-            for i, target_row in target_rows.iterrows():
-                iterdata = [(f'{data_bucket}/{target_row.key}', data_bucket, decoy_row.key)
-                            for i, decoy_row in decoy_rows.iterrows()]
-                futures = pw.map_reduce(run_ranking, iterdata, merge_rankings)
-                results = pw.get_result(futures)
-                result_df = pd.DataFrame({'database_path': target_row.database_path,
-                                          'mol': results.mol,
-                                          'adduct': target_row.adduct,
-                                          'modifier': target_row.modifier,
-                                          'fdr': results.fdr},
-                                         index=results.index)
-                fdr_dfs.append(result_df)
-
+    futures = pw.map(merge_rankings, ranking_jobs)
+    results = pw.get_result(futures)
     pw.clean()
 
-    return pd.concat(fdr_dfs)
+    return pd.concat(results)

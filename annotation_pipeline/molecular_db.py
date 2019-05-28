@@ -49,7 +49,7 @@ def store_centroids_database(config, input_db):
     return centroids_shape, centroids_head
 
 
-def calculate_centroids(config, input_db, formula_chunk_keys, isocalc_sigma=0.001238):
+def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isocalc_sigma=0.001238):
     def calculate_peaks_for_formula(formula_i, formula):
         mzs, ints = isocalc_wrapper.centroids(formula)
         if mzs is not None:
@@ -74,7 +74,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys, isocalc_sigma=0.00
         # These instrument settings are usually customized on a per-dataset basis out of a set of
         # 18 possible combinations, but most of EMBL's datasets are compatible with the following settings:
         'charge': {
-            'polarity': '+',
+            'polarity': polarity,
             'n_charges': 1,
         },
         'isocalc_sigma': isocalc_sigma
