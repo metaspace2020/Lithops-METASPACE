@@ -14,7 +14,7 @@ setup(name='pywren-annotation-pipeline',
           "pywren-ibm-cloud>=1.0.8",
           # pandas version should match the version in the runtime to ensure data generated locally can be unpickled
           # in pywren actions
-          "pandas==0.23.3",
+          "pandas==0.24.1",
           "pyImagingMSpec==0.1.4",
           "cpyImagingMSpec==0.3.2",
           "pyMSpec==0.1.2",
