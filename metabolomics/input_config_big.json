@@ -1,7 +1,7 @@
 {
   "dataset": {
     "path": "metabolomics/ds/AZ_Rat_brains",
-    "ds_chunks": "metabolomics/tmp/ds_chunks",
+    "ds_chunks": "metabolomics/tmp/ds_chunks/AZ_Rat_brains",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
