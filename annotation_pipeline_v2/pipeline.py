@@ -101,6 +101,7 @@ class Pipeline(object):
         images = {}
         ibm_cos = get_ibm_cos_client(self.config)
         for segm_i in range(self.centr_segm_n):
+            logger.info(f'Downloading pickled images #{segm_i}')
             obj = ibm_cos.get_object(Bucket=self.config['storage']['output_bucket'],
                                      Key=f'{self.output["formula_images"]}/{segm_i}.pickle')
 

@@ -1,7 +1,7 @@
 {
   "dataset": {
     "path": "metabolomics/ds/CT26_xenograft",
-    "ds_chunks": "metabolomics/tmp/ds_chunks",
+    "ds_chunks": "metabolomics/tmp/ds_chunks/CT26_xenograft",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
