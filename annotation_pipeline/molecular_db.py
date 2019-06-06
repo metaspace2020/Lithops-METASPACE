@@ -8,7 +8,7 @@ import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
 
-from .formula_parser import safe_generate_ion_formula
+from annotation_pipeline.formula_parser import safe_generate_ion_formula
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -69,7 +69,7 @@ def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isoc
         ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
         return centroids_df.shape, centroids_df.head(8)
 
-    from .isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
+    from annotation_pipeline.isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
     isocalc_wrapper = IsocalcWrapper({
         # These instrument settings are usually customized on a per-dataset basis out of a set of
         # 18 possible combinations, but most of EMBL's datasets are compatible with the following settings:

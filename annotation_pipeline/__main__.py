@@ -3,40 +3,54 @@ import json
 import logging
 from pathlib import Path
 from tempfile import TemporaryDirectory
-
 import matplotlib.pyplot as plt
 
+from annotation_pipeline.utils import get_ibm_cos_client
 from annotation_pipeline.imzml import convert_imzml_to_txt
-from annotation_pipeline.pipeline import annotate_dataset
+from annotation_pipeline.pipeline import Pipeline
+from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids, clean_formula_chunks
 
 logger = logging.getLogger(name='annotation_pipeline')
 
 
-def get_ibm_cos_client(config):
-    import ibm_boto3
-    from ibm_botocore.client import Config
-    return ibm_boto3.client(service_name='s3',
-                            ibm_api_key_id=config['ibm_cos']['api_key'],
-                            config=Config(signature_version='oauth'),
-                            endpoint_url=config['ibm_cos']['endpoint'])
-
-
 def annotate(args, config):
     input_config = json.load(args.input)
-    input_data = input_config['dataset']
-    input_db = input_config['molecular_db']
     output = Path(args.output) if not args.no_output else None
 
     if output and not output.exists():
         output.mkdir(parents=True, exist_ok=True)
 
-    formula_scores_df, formula_images = annotate_dataset(config, input_data, input_db)
+    pipeline = Pipeline(config, input_config)
+    pipeline()
+    results_df = pipeline.get_results()
+    formula_images = pipeline.get_images()
 
     if output:
-        formula_scores_df.to_pickle(output / 'formula_scores_df.pickle')
+        results_df.to_pickle(output / 'formula_scores_df.pickle')
         for key, image_set in formula_images.items():
             for i, image in image_set:
                 plt.imsave(output / f'{key}_{i}.png', image.toarray())
+
+
+def generate_centroids(args, config):
+    input_config = json.load(args.input)
+    input_db = input_config['molecular_db']
+    input_data = input_config['dataset']
+
+    databases_path = Path(Path(input_db['databases'][0]).parent)
+    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db1.pickle', 22)  # HMDB-v4
+    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db2.pickle', 19)  # ChEBI-2018-01
+    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
+    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
+
+    num_formulas, formula_chunk_keys = build_database(config, input_db)
+    logger.info(f'Number of formulas: {num_formulas}')
+    # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
+    polarity = input_data['polarity']
+    # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
+    isocalc_sigma = input_data['isocalc_sigma']
+    centroids_shape, centroids_head = calculate_centroids(config, input_db, formula_chunk_keys, polarity, isocalc_sigma)
+    logger.info(f'Number of centroids generated: {centroids_shape[0]}')
 
 
 def convert_imzml(args, config):
@@ -90,7 +104,7 @@ def convert_imzml(args, config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run colocalization jobs',
-                                     usage='python -m annotation_pipeline annotate [input_config.json] [output path]')
+                                     usage='python3 -m annotation_pipeline annotate [input_config.json] [output path]')
     parser.add_argument('--config', type=argparse.FileType('r'), default='config.json', help='config.json path')
 
     subparsers = parser.add_subparsers(title='Sub-commands', dest='action')
@@ -102,6 +116,11 @@ if __name__ == '__main__':
                                  help='input_config.json path')
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
+
+    annotate_parser = subparsers.add_parser('generate_centroids')
+    annotate_parser.set_defaults(func=generate_centroids)
+    annotate_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
+                                 help='input_config.json path')
 
     convert_parser = subparsers.add_parser('convert_imzml')
     convert_parser.set_defaults(func=convert_imzml)

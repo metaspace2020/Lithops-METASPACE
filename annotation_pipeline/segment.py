@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import sys
-from .utils import logger, get_pixel_indices, get_ibm_cos_client
+from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client
 from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import msgpack_numpy as msgpack
