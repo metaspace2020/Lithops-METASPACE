@@ -10,7 +10,7 @@ from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra
 from annotation_pipeline.segment import clip_centroids_df, calculate_centroids_segments_n, segment_centroids
-from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client
+from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client, append_pywren_stats
 from annotation_pipeline.utils import logger
 
 
@@ -66,13 +66,15 @@ class Pipeline(object):
 
         db_bucket_key = f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_pandas"]}'
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
-        pw.map(clip_centroids_df, [[db_bucket_key, mz_min, mz_max]])
-        self.centr_n = pw.get_result()
+        futures = pw.map(clip_centroids_df, [[db_bucket_key, mz_min, mz_max]])
+        self.centr_n = pw.get_result(futures)
+        append_pywren_stats(clip_centroids_df.__name__, 2048, futures)
         logger.info(f'Prepared {self.centr_n} centroids')
 
         self.centr_segm_n = calculate_centroids_segments_n(self.centr_n, self.ds_segm_n, self.ds_segm_size_mb)
-        pw.map(segment_centroids, [[self.config["storage"]["ds_bucket"], self.centr_segm_n, self.input_db["centroids_segments"]]])
-        pw.get_result()
+        futures = pw.map(segment_centroids, [[self.config["storage"]["ds_bucket"], self.centr_segm_n, self.input_db["centroids_segments"]]])
+        pw.get_result(futures)
+        append_pywren_stats(segment_centroids.__name__, 2048, futures)
         logger.info(f'Segmented centroids into {self.centr_segm_n} segments')
 
     def annotate(self):
@@ -84,8 +86,9 @@ class Pipeline(object):
                                                        self.ds_segments_bounds, self.coordinates, self.image_gen_config)
 
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
-        pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
-        formula_metrics_list = pw.get_result()
+        futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
+        formula_metrics_list = pw.get_result(futures)
+        append_pywren_stats(process_centr_segment.__name__, 2048, futures)
 
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
