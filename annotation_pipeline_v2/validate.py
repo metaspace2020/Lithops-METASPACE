@@ -6,7 +6,7 @@ from pyImagingMSpec.image_measures import isotope_image_correlation, isotope_pat
 from cpyImagingMSpec import measure_of_chaos
 from pyImagingMSpec import smoothing
 
-from annotation_pipeline.segment import ISOTOPIC_PEAK_N
+from .segment import ISOTOPIC_PEAK_N
 
 METRICS = OrderedDict([('chaos', 0), ('spatial', 0), ('spectral', 0), ('msm', 0),
                        ('total_iso_ints', [0, 0, 0, 0]),
