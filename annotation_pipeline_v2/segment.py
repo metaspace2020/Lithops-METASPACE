@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pickle
 import sys
-from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats
+from .utils import logger, get_pixel_indices, get_ibm_cos_client
 from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import msgpack_numpy as msgpack
@@ -140,16 +140,12 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
                 ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
 
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-        futures = pw.map(_merge, range(len(mz_segments)))
-        pw.get_result(futures)
-        return _merge.__name__, futures
+        pw.map(_merge, range(len(mz_segments)))
+        pw.get_result()
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    futures = pw.map_reduce(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}', merge_spectra_chunk_segments)
-    inner_func_name, inner_futures = pw.get_result(futures)
-    append_pywren_stats(segment_spectra_chunk.__name__, 1024, futures[:-1])
-    append_pywren_stats(inner_func_name, 512, inner_futures)
-    append_pywren_stats(merge_spectra_chunk_segments.__name__, 1024, futures[-1])
+    pw.map_reduce(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}', merge_spectra_chunk_segments)
+    pw.get_result()
 
 
 def clip_centroids_df(key, data_stream, mz_min, mz_max):
