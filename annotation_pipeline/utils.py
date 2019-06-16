@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import ibm_boto3
 from ibm_botocore.client import Config
+import os
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
@@ -62,3 +63,29 @@ def get_pixel_indices(coordinates):
     pixel_indices = _coord[:, 1] * ncols + _coord[:, 0]
     pixel_indices = pixel_indices.astype(np.int32)
     return pixel_indices
+
+
+def init_pywren_stats(filename='stats.csv'):
+    with open(filename, 'w') as csvfile:
+        csvfile.write('Function name,Actions number,Actions memory,Average runtime' + '\n')
+
+
+def append_pywren_stats(func_name, runtime_memory, futures, filename='stats.csv'):
+    if not os.path.isfile(filename):
+        return
+
+    if type(futures) != list:
+        futures = [futures]
+
+    actions_num = len(futures)
+    # actions_mem = map_futures[0].run_status['runtime_memory']
+    actions_mem = runtime_memory
+    average_runtime = np.average([future.run_status['exec_time'] for future in futures])
+
+    with open(filename, 'a') as csvfile:
+        csvfile.write(f'{func_name},{actions_num},{actions_mem},{average_runtime}\n')
+
+
+def remove_pywren_stats(filename='stats.csv'):
+    if os.path.exists(filename):
+        os.remove(filename)

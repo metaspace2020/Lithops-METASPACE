@@ -5,8 +5,8 @@ from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-from .utils import ds_dims, get_pixel_indices
-from .validate import make_compute_image_metrics, formula_image_metrics
+from annotation_pipeline.utils import ds_dims, get_pixel_indices
+from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 
 
 def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_px=1):
