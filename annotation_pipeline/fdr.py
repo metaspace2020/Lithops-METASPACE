@@ -6,6 +6,7 @@ import pywren_ibm_cloud as pywren
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
+from annotation_pipeline.utils import append_pywren_stats
 
 
 def _get_random_adduct_set(size, adducts, offset):
@@ -62,6 +63,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(build_ranking, [(formula_to_id_path, job_i, *job) for job_i, job in enumerate(ranking_jobs)])
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
+    append_pywren_stats(build_ranking.__name__, 2048, futures)
     pw.clean()
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
@@ -113,6 +115,7 @@ def calculate_fdrs(config, input_data, rankings_df):
 
     futures = pw.map(merge_rankings, ranking_jobs)
     results = pw.get_result(futures)
+    append_pywren_stats(merge_rankings.__name__, 2048, futures)
     pw.clean()
 
     return pd.concat(results)
