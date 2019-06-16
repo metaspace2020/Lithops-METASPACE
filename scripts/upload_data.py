@@ -2,7 +2,8 @@ import argparse
 import json
 import os
 
-from annotation_pipeline.utils import get_ibm_cos_client, upload_to_cos
+from annotation_pipeline.__main__ import get_ibm_cos_client
+from annotation_pipeline_v2.utils import upload_to_cos
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Upload input data to COS', usage='')
