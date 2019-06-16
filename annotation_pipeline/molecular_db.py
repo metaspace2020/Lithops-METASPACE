@@ -1,13 +1,13 @@
 from io import BytesIO
 from itertools import repeat
 from ibm_botocore.client import ClientError
-
+from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats
+from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, clean_from_cos
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -55,8 +55,22 @@ def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isoc
     return centroids_shape, centroids_head
 
 
+def get_formulas(config, ibm_cos, formula_keys):
+    def get_formula_stream(formula_key):
+        return pickle.loads(ibm_cos.get_object(Bucket=config['storage']['db_bucket'], Key=formula_key)['Body'].read())
+
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        results = list(pool.map(get_formula_stream, formula_keys))
+
+    # Reduce list of formulas for processing to include only unique formulas
+    formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
+    formulas.index.name = 'formula_i'
+    return formulas
+
+
 def build_database(config, input_db, n_formula_chunks=256):
-    def generate_formulas(key, data_stream, adducts, modifiers):
+    def generate_formulas(key, data_stream, formula_i, data, ibm_cos):
+        adducts, modifiers = data
         mols = pickle.loads(data_stream.read())
         formulas = set()
 
@@ -66,19 +80,13 @@ def build_database(config, input_db, n_formula_chunks=256):
 
         if None in formulas:
             formulas.remove(None)
-        return formulas
 
-    def store_formulas(results, ibm_cos):
-        # Reduce list of formulas for processing to include only unique formulas
-        formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
-        formulas.index.name = 'formula_i'
+        formula_key = f'{input_db["formulas_chunks"]}_temp/{formula_i}.pickle'
+        ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=formula_key, Body=pickle.dumps(formulas))
+        return formula_key
 
-        ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=f'{input_db["formulas_chunks"]}/formula_to_id.pickle',
-                           Body=pickle.dumps(dict(zip(formulas.formula, formulas.index))))
-
-        ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=f'{input_db["formulas_chunks"]}/id_to_formula.pickle',
-                           Body=pickle.dumps(formulas.formula.to_dict()))
-
+    def store_formulas(formula_keys, ibm_cos):
+        formulas = get_formulas(config, ibm_cos, formula_keys)
         num_chunks = min(len(formulas), n_formula_chunks)
         chunk_keys = []
 
@@ -101,24 +109,26 @@ def build_database(config, input_db, n_formula_chunks=256):
     databases = input_db['databases']
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [(f'{config["storage"]["db_bucket"]}/{database}', [adduct], modifiers) for database in databases for adduct in adducts]
-    futures = pw.map_reduce(generate_formulas, iterdata, store_formulas)
+
+    iterdata = [(database, [adduct], modifiers) for database in databases for adduct in adducts]
+    iterdata = [(f'{config["storage"]["db_bucket"]}/{database}', i, (adducts, modifiers))
+                for i, (database, adducts, modifiers) in enumerate(iterdata)]
+    futures = pw.map(generate_formulas, iterdata)
+    formula_keys = pw.get_result(futures)
+    append_pywren_stats(generate_formulas.__name__, 2048, futures)
+
+    futures = pw.map(store_formulas, [[formula_keys]])
     num_formulas, formula_chunk_keys = pw.get_result(futures)
-    append_pywren_stats(generate_formulas.__name__, 2048, futures[:-1])
-    append_pywren_stats(store_formulas.__name__, 2048, futures[-1])
-    pw.clean()
+    append_pywren_stats(store_formulas.__name__, 2048, futures)
 
-    return num_formulas, formula_chunk_keys
+    return num_formulas, formula_keys, formula_chunk_keys
 
 
-def get_formula_id_dfs(config, input_db):
+def get_formula_id_dfs(config, formula_keys):
     ibm_cos = get_ibm_cos_client(config)
-    formula_to_id = pickle.loads(ibm_cos.get_object(Bucket=config['storage']['db_bucket'],
-                                                    Key=f'{input_db["formulas_chunks"]}/formula_to_id.pickle'
-                                                    )['Body'].read())
-    id_to_formula = pickle.loads(ibm_cos.get_object(Bucket=config['storage']['db_bucket'],
-                                                    Key=f'{input_db["formulas_chunks"]}/id_to_formula.pickle'
-                                                    )['Body'].read())
+    formulas = get_formulas(config, ibm_cos, formula_keys)
+    formula_to_id = dict(zip(formulas.formula, formulas.index))
+    id_to_formula = formulas.formula.to_dict()
 
     return formula_to_id, id_to_formula
 

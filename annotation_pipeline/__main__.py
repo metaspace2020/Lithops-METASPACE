@@ -44,7 +44,7 @@ def generate_centroids(args, config):
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
 
-    num_formulas, formula_chunk_keys = build_database(config, input_db)
+    num_formulas, formula_keys, formula_chunk_keys = build_database(config, input_db)
     logger.info(f'Number of formulas: {num_formulas}')
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
     polarity = input_data['polarity']
