@@ -8,8 +8,7 @@ import pandas as pd
 
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra
-from annotation_pipeline.segment import clip_centroids_df, calculate_centroids_segments_n, segment_centroids
+from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids
 from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client, append_pywren_stats
 from annotation_pipeline.utils import logger
 
@@ -62,20 +61,12 @@ class Pipeline(object):
 
     def segment_centroids(self):
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
-        pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
-
-        db_bucket_key = f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_pandas"]}'
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
-        futures = pw.map(clip_centroids_df, [[db_bucket_key, mz_min, mz_max]])
-        self.centr_n = pw.get_result(futures)
-        append_pywren_stats(clip_centroids_df.__name__, 2048, futures)
-        logger.info(f'Prepared {self.centr_n} centroids')
-
-        self.centr_segm_n = calculate_centroids_segments_n(self.centr_n, self.ds_segm_n, self.ds_segm_size_mb)
-        futures = pw.map(segment_centroids, [[self.config["storage"]["ds_bucket"], self.centr_segm_n, self.input_db["centroids_segments"]]])
-        pw.get_result(futures)
-        append_pywren_stats(segment_centroids.__name__, 2048, futures)
-        logger.info(f'Segmented centroids into {self.centr_segm_n} segments')
+        self.centr_n, self.centr_segm_n = segment_centroids(self.config, self.config["storage"]["db_bucket"],
+                                                            self.input_db["centroids_chunks"],
+                                                            self.input_db["centroids_segments"],
+                                                            self.input_db["centroids_df"], mz_min, mz_max,
+                                                            self.ds_segm_n, self.ds_segm_size_mb)
 
     def annotate(self):
         logger.info('Annotating...')

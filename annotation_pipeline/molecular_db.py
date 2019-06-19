@@ -11,9 +11,15 @@ from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, c
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
+NUM_FORMULAS_CHUNKS = 256
 
 
-def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isocalc_sigma=0.001238):
+def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238, n_formulas_chunks=NUM_FORMULAS_CHUNKS):
+    bucket = config["storage"]["db_bucket"]
+    formulas_chunks_prefix = input_db["formulas_chunks"]
+    centroids_chunks_prefix = input_db["centroids_chunks"]
+    clean_from_cos(config, bucket, centroids_chunks_prefix)
+
     def calculate_peaks_for_formula(formula_i, formula):
         mzs, ints = isocalc_wrapper.centroids(formula)
         if mzs is not None:
@@ -21,17 +27,15 @@ def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isoc
         else:
             return []
 
-    def calculate_peaks_for_chunk(key, data_stream):
+    def calculate_peaks_for_chunk(key, data_stream, chunk_i, ibm_cos):
         chunk_df = pd.read_pickle(data_stream._raw_stream, None)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
-        return peaks_df
+        peaks_df.set_index('formula_i')
 
-    def merge_chunks_and_store(results, ibm_cos):
-        centroids_df = pd.concat(results).set_index('formula_i')
-        ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=input_db['centroids_pandas'], Body=pickle.dumps(centroids_df))
-        return centroids_df.shape, centroids_df.head(8)
+        centroids_chunk_key = f'{centroids_chunks_prefix}/{chunk_i}.pickle'
+        ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=pickle.dumps(peaks_df))
 
     from annotation_pipeline.isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
     isocalc_wrapper = IsocalcWrapper({
@@ -45,32 +49,18 @@ def calculate_centroids(config, input_db, formula_chunk_keys, polarity='+', isoc
     })
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [f'{config["storage"]["db_bucket"]}/{chunk_key}' for chunk_key in formula_chunk_keys]
-    futures = pw.map_reduce(calculate_peaks_for_chunk, iterdata, merge_chunks_and_store)
-    centroids_shape, centroids_head = pw.get_result(futures)
-    append_pywren_stats(calculate_peaks_for_chunk.__name__, 2048, futures[:-1])
-    append_pywren_stats(merge_chunks_and_store.__name__, 2048, futures[-1])
-    pw.clean()
-
-    return centroids_shape, centroids_head
+    iterdata = [[f'{bucket}/{formulas_chunks_prefix}/{chunk_i}.pickle', chunk_i] for chunk_i in range(n_formulas_chunks)]
+    futures = pw.map(calculate_peaks_for_chunk, iterdata)
+    pw.get_result(futures)
+    append_pywren_stats(calculate_peaks_for_chunk.__name__, 2048, futures)
 
 
-def get_formulas(config, ibm_cos, formula_keys):
-    def get_formula_stream(formula_key):
-        return pickle.loads(ibm_cos.get_object(Bucket=config['storage']['db_bucket'], Key=formula_key)['Body'].read())
+def build_database(config, input_db, n_formulas_chunks=NUM_FORMULAS_CHUNKS):
+    bucket = config["storage"]["db_bucket"]
+    formulas_chunks_prefix = input_db["formulas_chunks"]
+    clean_from_cos(config, bucket, formulas_chunks_prefix)
 
-    with ThreadPoolExecutor(max_workers=128) as pool:
-        results = list(pool.map(get_formula_stream, formula_keys))
-
-    # Reduce list of formulas for processing to include only unique formulas
-    formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
-    formulas.index.name = 'formula_i'
-    return formulas
-
-
-def build_database(config, input_db, n_formula_chunks=256):
-    def generate_formulas(key, data_stream, formula_i, data, ibm_cos):
-        adducts, modifiers = data
+    def generate_formulas(key, data_stream, adducts, modifiers):
         mols = pickle.loads(data_stream.read())
         formulas = set()
 
@@ -80,63 +70,60 @@ def build_database(config, input_db, n_formula_chunks=256):
 
         if None in formulas:
             formulas.remove(None)
+        return formulas
 
-        formula_key = f'{input_db["formulas_chunks"]}_temp/{formula_i}.pickle'
-        ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=formula_key, Body=pickle.dumps(formulas))
-        return formula_key
-
-    def store_formulas(formula_keys, ibm_cos):
-        formulas = get_formulas(config, ibm_cos, formula_keys)
-        num_chunks = min(len(formulas), n_formula_chunks)
-        chunk_keys = []
+    def store_formulas(results, ibm_cos):
+        # Reduce list of formulas for processing to include only unique formulas
+        formulas = pd.DataFrame(sorted(set().union(*results)), columns=['formula'])
+        formulas.index.name = 'formula_i'
+        num_chunks = min(len(formulas), n_formulas_chunks)
 
         # Write pickled chunks equivalent to formulas.csv with (formula_i, formula)
-        for i in range(num_chunks):
-            lo = len(formulas) * i // num_chunks
-            hi = len(formulas) * (i + 1) // num_chunks
-            chunk_key = f'{input_db["formulas_chunks"]}/{i}.pickle'
-            chunk_keys.append(chunk_key)
+        def _store(formula_chunk_i):
+            lo = len(formulas) * formula_chunk_i // num_chunks
+            hi = len(formulas) * (formula_chunk_i + 1) // num_chunks
+            chunk_key = f'{formulas_chunks_prefix}/{formula_chunk_i}.pickle'
             chunk = pd.DataFrame(formulas.formula[lo:hi], copy=True)
             chunk.index.name = 'formula_i'
 
-            ibm_cos.put_object(Bucket=config['storage']['db_bucket'], Key=chunk_key,
-                               Body=pickle.dumps(chunk))
+            ibm_cos.put_object(Bucket=bucket, Key=chunk_key, Body=pickle.dumps(chunk))
 
-        return len(formulas), chunk_keys
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            pool.map(_store, range(num_chunks))
+
+        return len(formulas)
 
     adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    iterdata = [(f'{bucket}/{database}', [adduct], modifiers) for database in databases for adduct in adducts]
+    futures = pw.map_reduce(generate_formulas, iterdata, store_formulas)
+    num_formulas = pw.get_result(futures)
+    append_pywren_stats(generate_formulas.__name__, 2048, futures[:-1])
+    append_pywren_stats(store_formulas.__name__, 2048, futures[-1])
 
-    iterdata = [(database, [adduct], modifiers) for database in databases for adduct in adducts]
-    iterdata = [(f'{config["storage"]["db_bucket"]}/{database}', i, (adducts, modifiers))
-                for i, (database, adducts, modifiers) in enumerate(iterdata)]
-    futures = pw.map(generate_formulas, iterdata)
-    formula_keys = pw.get_result(futures)
-    append_pywren_stats(generate_formulas.__name__, 2048, futures)
-
-    futures = pw.map(store_formulas, [[formula_keys]])
-    num_formulas, formula_chunk_keys = pw.get_result(futures)
-    append_pywren_stats(store_formulas.__name__, 2048, futures)
-
-    return num_formulas, formula_keys, formula_chunk_keys
+    return num_formulas
 
 
-def get_formula_id_dfs(config, formula_keys):
+def get_formula_id_dfs(config, input_db, n_formulas_chunks=NUM_FORMULAS_CHUNKS):
     ibm_cos = get_ibm_cos_client(config)
-    formulas = get_formulas(config, ibm_cos, formula_keys)
+    bucket = config["storage"]["db_bucket"]
+    formulas_chunks_prefix = input_db["formulas_chunks"]
+
+    def get_formula_chunk(formula_chunk_key):
+        return pickle.loads(ibm_cos.get_object(Bucket=config['storage']['db_bucket'], Key=formula_chunk_key)['Body'].read())
+
+    with ThreadPoolExecutor(max_workers=128) as pool:
+        iterdata = [f'{bucket}/{formulas_chunks_prefix}/{chunk_i}.pickle' for chunk_i in range(n_formulas_chunks)]
+        results = list(pool.map(get_formula_chunk, iterdata))
+
+    formulas = pd.concat(results)
     formula_to_id = dict(zip(formulas.formula, formulas.index))
     id_to_formula = formulas.formula.to_dict()
 
     return formula_to_id, id_to_formula
-
-
-def clean_formula_chunks(config, input_db, formula_chunk_keys):
-    ibm_cos = get_ibm_cos_client(config)
-    ibm_cos.delete_objects(Bucket=config['storage']['db_bucket'],
-                           Delete={'Objects': [{'Key': key} for key in formula_chunk_keys]})
 
 
 def dump_mol_db(config, bucket, key, db_id, force=False):

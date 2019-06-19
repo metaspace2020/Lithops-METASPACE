@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from annotation_pipeline.utils import get_ibm_cos_client
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids, clean_formula_chunks
+from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids
 
 logger = logging.getLogger(name='annotation_pipeline')
 
