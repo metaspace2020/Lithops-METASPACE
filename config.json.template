@@ -2,7 +2,6 @@
   "ibm_cf": {
     "endpoint": "https://****.functions.cloud.ibm.com",
     "namespace": "****",
-    "action_memory": 1024,
     "api_key": "****"
   },
   "ibm_cos": {
@@ -11,7 +10,8 @@
   },
   "pywren": {
     "storage_bucket": "****",
-    "runtime": "ibmfunctions/pywren-metabolomics:3.6"
+    "runtime": "ibmfunctions/pywren-metabolomics:3.6",
+    "data_cleaner": true
   },
   "storage": {
     "ds_bucket": "****",
