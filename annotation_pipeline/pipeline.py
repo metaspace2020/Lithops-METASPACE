@@ -64,8 +64,7 @@ class Pipeline(object):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
         self.centr_n, self.centr_segm_n = segment_centroids(self.config, self.config["storage"]["db_bucket"],
                                                             self.input_db["centroids_chunks"],
-                                                            self.input_db["centroids_segments"],
-                                                            self.input_db["centroids_df"], mz_min, mz_max,
+                                                            self.input_db["centroids_segments"], mz_min, mz_max,
                                                             self.ds_segm_n, self.ds_segm_size_mb)
 
     def annotate(self):

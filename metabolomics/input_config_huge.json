@@ -11,7 +11,6 @@
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
     "centroids_chunks": "metabolomics/db/centroids_chunks",
-    "centroids_df": "metabolomics/db/centroids.pickle",
     "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",

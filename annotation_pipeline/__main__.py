@@ -44,14 +44,14 @@ def generate_centroids(args, config):
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
 
-    num_formulas, formula_keys, formula_chunk_keys = build_database(config, input_db)
+    num_formulas, n_formulas_chunks = build_database(config, input_db)
     logger.info(f'Number of formulas: {num_formulas}')
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
     polarity = input_data['polarity']
     # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
     isocalc_sigma = input_data['isocalc_sigma']
-    centroids_shape, centroids_head = calculate_centroids(config, input_db, formula_chunk_keys, polarity, isocalc_sigma)
-    logger.info(f'Number of centroids generated: {centroids_shape[0]}')
+    num_centroids, n_centroids_chunks = calculate_centroids(config, input_db, polarity, isocalc_sigma)
+    logger.info(f'Number of centroids generated: {num_centroids}')
 
 
 def convert_imzml(args, config):
@@ -118,10 +118,10 @@ if __name__ == '__main__':
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
 
-    annotate_parser = subparsers.add_parser('generate_centroids')
-    annotate_parser.set_defaults(func=generate_centroids)
-    annotate_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
-                                 help='input_config.json path')
+    centroids_parser = subparsers.add_parser('generate_centroids')
+    centroids_parser.set_defaults(func=generate_centroids)
+    centroids_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
+                                  help='input_config.json path')
 
     convert_parser = subparsers.add_parser('convert_imzml')
     convert_parser.set_defaults(func=convert_imzml)

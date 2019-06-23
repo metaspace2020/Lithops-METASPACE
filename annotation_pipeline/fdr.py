@@ -5,7 +5,7 @@ import pandas as pd
 import pywren_ibm_cloud as pywren
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.molecular_db import DECOY_ADDUCTS
+from annotation_pipeline.molecular_db import DECOY_ADDUCTS, get_formula_id_dfs
 from annotation_pipeline.utils import append_pywren_stats
 
 
@@ -17,10 +17,10 @@ def _get_random_adduct_set(size, adducts, offset):
 
 def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
 
-    def build_ranking(key, data_stream, ibm_cos, job_i, group_i, ranking_i, database, modifier, adduct):
+    def build_ranking(job_i, group_i, ranking_i, database, modifier, adduct, ibm_cos):
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        formula_to_id = pickle.loads(data_stream.read())
+        formula_to_id = get_formula_id_dfs(ibm_cos, config["storage"]["db_bucket"], input_db["formulas_chunks"])[0]
         mols = pickle.loads(ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=database)['Body'].read())
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
@@ -46,7 +46,6 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
         ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"], Key=key, Body=pickle.dumps(ranking_df))
         return job_i, key
 
-    formula_to_id_path = f'{config["storage"]["db_bucket"]}/{input_db["formulas_chunks"]}/formula_to_id.pickle'
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
     n_decoy_rankings = input_data.get('num_decoys', len(decoy_adducts))
     msm_lookup = formula_scores_df.msm.to_dict() # Ideally this data would stay in COS so it doesn't have to be reuploaded
@@ -61,7 +60,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
                              for ranking_i in range(n_decoy_rankings))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(build_ranking, [(formula_to_id_path, job_i, *job) for job_i, job in enumerate(ranking_jobs)])
+    futures = pw.map(build_ranking, [(job_i, *job) for job_i, job in enumerate(ranking_jobs)])
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
     append_pywren_stats(build_ranking.__name__, 2048, futures)
 
