@@ -47,7 +47,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238, 
             'polarity': polarity,
             'n_charges': 1,
         },
-        'isocalc_sigma': isocalc_sigma
+        'isocalc_sigma': float(f"{isocalc_sigma:f}") # Rounding to match production implementation
     })
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
