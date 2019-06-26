@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from annotation_pipeline.utils import get_ibm_cos_client
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids, clean_formula_chunks
+from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids
 
 logger = logging.getLogger(name='annotation_pipeline')
 
@@ -44,14 +44,14 @@ def generate_centroids(args, config):
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
 
-    num_formulas, formula_chunk_keys = build_database(config, input_db)
+    num_formulas, n_formulas_chunks = build_database(config, input_db)
     logger.info(f'Number of formulas: {num_formulas}')
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
     polarity = input_data['polarity']
     # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
     isocalc_sigma = input_data['isocalc_sigma']
-    centroids_shape, centroids_head = calculate_centroids(config, input_db, formula_chunk_keys, polarity, isocalc_sigma)
-    logger.info(f'Number of centroids generated: {centroids_shape[0]}')
+    num_centroids, n_centroids_chunks = calculate_centroids(config, input_db, polarity, isocalc_sigma)
+    logger.info(f'Number of centroids generated: {num_centroids}')
 
 
 def convert_imzml(args, config):
@@ -69,12 +69,12 @@ def convert_imzml(args, config):
         imzml_filename = input_key_imzml.split('/')[-1]
         imzml_path = str(Path(temp_dir.name) / imzml_filename)
 
-        logger.debug('download_file', input_bucket, input_key_imzml, imzml_path)
+        logger.info('download_file', input_bucket, input_key_imzml, imzml_path)
         ibm_cos.download_file(input_bucket, input_key_imzml, imzml_path)
 
         input_key_ibd = input_key_imzml[:-6] + '.ibd'
         ibd_path = imzml_path[:-6] + '.ibd'
-        logger.debug('download_file', input_bucket, input_key_ibd, ibd_path)
+        logger.info('download_file', input_bucket, input_key_ibd, ibd_path)
         ibm_cos.download_file(input_bucket, input_key_ibd, ibd_path)
     else:
         imzml_path = args.input
@@ -89,17 +89,17 @@ def convert_imzml(args, config):
     coord_path = spectra_path[:-4] + '_coord.txt'
 
     logger.info('Converting to txt')
-    logger.debug('convert_imzml_to_txt', imzml_path, spectra_path, coord_path)
+    logger.info('convert_imzml_to_txt', imzml_path, spectra_path, coord_path)
     convert_imzml_to_txt(imzml_path, spectra_path, coord_path)
 
     # Upload output if using COS
     if args.cos_output:
         logger.info('Uploading output files')
-        logger.debug('upload_file', output_bucket, output_key, spectra_path)
+        logger.info('upload_file', output_bucket, output_key, spectra_path)
         ibm_cos.upload_file(spectra_path, output_bucket, output_key)
 
         output_key_coord = output_key[:-4] + '_coord.txt'
-        logger.debug('upload_file', output_bucket, output_key_coord, coord_path)
+        logger.info('upload_file', output_bucket, output_key_coord, coord_path)
         ibm_cos.upload_file(coord_path, output_bucket, output_key_coord)
 
 
@@ -118,10 +118,10 @@ if __name__ == '__main__':
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
 
-    annotate_parser = subparsers.add_parser('generate_centroids')
-    annotate_parser.set_defaults(func=generate_centroids)
-    annotate_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
-                                 help='input_config.json path')
+    centroids_parser = subparsers.add_parser('generate_centroids')
+    centroids_parser.set_defaults(func=generate_centroids)
+    centroids_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
+                                  help='input_config.json path')
 
     convert_parser = subparsers.add_parser('convert_imzml')
     convert_parser.set_defaults(func=convert_imzml)
