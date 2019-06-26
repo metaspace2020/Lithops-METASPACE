@@ -38,7 +38,7 @@ def clean_from_cos(config, bucket, prefix):
         keys = [obj['Key'] for obj in objs['Contents']]
         formatted_keys = {'Objects': [{'Key': key} for key in keys]}
         cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
-        logger.debug(f'Removed {objs["KeyCount"]} objects from {prefix}')
+        logger.info(f'Removed {objs["KeyCount"]} objects from {prefix}')
         objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
 
 

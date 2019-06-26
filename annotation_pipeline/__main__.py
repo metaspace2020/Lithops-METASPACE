@@ -69,12 +69,12 @@ def convert_imzml(args, config):
         imzml_filename = input_key_imzml.split('/')[-1]
         imzml_path = str(Path(temp_dir.name) / imzml_filename)
 
-        logger.debug('download_file', input_bucket, input_key_imzml, imzml_path)
+        logger.info('download_file', input_bucket, input_key_imzml, imzml_path)
         ibm_cos.download_file(input_bucket, input_key_imzml, imzml_path)
 
         input_key_ibd = input_key_imzml[:-6] + '.ibd'
         ibd_path = imzml_path[:-6] + '.ibd'
-        logger.debug('download_file', input_bucket, input_key_ibd, ibd_path)
+        logger.info('download_file', input_bucket, input_key_ibd, ibd_path)
         ibm_cos.download_file(input_bucket, input_key_ibd, ibd_path)
     else:
         imzml_path = args.input
@@ -89,17 +89,17 @@ def convert_imzml(args, config):
     coord_path = spectra_path[:-4] + '_coord.txt'
 
     logger.info('Converting to txt')
-    logger.debug('convert_imzml_to_txt', imzml_path, spectra_path, coord_path)
+    logger.info('convert_imzml_to_txt', imzml_path, spectra_path, coord_path)
     convert_imzml_to_txt(imzml_path, spectra_path, coord_path)
 
     # Upload output if using COS
     if args.cos_output:
         logger.info('Uploading output files')
-        logger.debug('upload_file', output_bucket, output_key, spectra_path)
+        logger.info('upload_file', output_bucket, output_key, spectra_path)
         ibm_cos.upload_file(spectra_path, output_bucket, output_key)
 
         output_key_coord = output_key[:-4] + '_coord.txt'
-        logger.debug('upload_file', output_bucket, output_key_coord, coord_path)
+        logger.info('upload_file', output_bucket, output_key_coord, coord_path)
         ibm_cos.upload_file(coord_path, output_bucket, output_key_coord)
 
 

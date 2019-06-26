@@ -84,6 +84,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     segm_arr_columns = 3
     segm_n = segm_arr_columns * (total_n_mz * float_prec) // (ds_segm_size_mb * 2**20)
     segm_n = max(1, int(segm_n))
+    segm_n = min(segm_n, 1000)
 
     segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n + 1)]
     segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
@@ -176,6 +177,7 @@ def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz
     data_per_centr_segm_mb = 50
     peaks_per_centr_segm = 1e4
     centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb, centr_n // peaks_per_centr_segm, 32))
+    centr_segm_n = min(centr_segm_n, 1000)
 
     logger.info(f'Preparing {centr_n} centroids for {centr_segm_n} segments')
 
@@ -201,11 +203,11 @@ def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(upload_db_segment, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=3072)
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=4096)
     futures = pw.map_reduce(clip_centroids_df_per_chunk, db_prefix_bucket_key, segment_centr_df)
     pw.get_result(futures)
-    append_pywren_stats(clip_centroids_df_per_chunk.__name__, 3072, futures[:-1])
-    append_pywren_stats(segment_centr_df.__name__, 3072, futures[-1])
+    append_pywren_stats(clip_centroids_df_per_chunk.__name__, 4096, futures[:-1])
+    append_pywren_stats(segment_centr_df.__name__, 4096, futures[-1])
     logger.info(f'Segmented centroids into {centr_segm_n} segments')
 
     return centr_n, centr_segm_n
