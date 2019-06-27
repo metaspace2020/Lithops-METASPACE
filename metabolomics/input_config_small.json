@@ -17,8 +17,8 @@
       "metabolomics/db/mol_db1.pickle",
       "metabolomics/db/mol_db2.pickle"
     ],
-    "adducts": ["","+H"],
-    "modifiers": ["", "-H2O"]
+    "adducts": ["","+H","+Na","+K"],
+    "modifiers": [""]
   },
   "output": {
     "formula_images": "metabolomics/tmp/formula_images"
