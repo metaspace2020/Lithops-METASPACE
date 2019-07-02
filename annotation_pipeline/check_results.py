@@ -60,8 +60,9 @@ def check_results(results_df, ref_results):
     fdr_level = merged_results.fdr.apply(quantize_fdr)
     fdr_ref_level = merged_results.fdr_ref.apply(quantize_fdr)
 
-    fdr_exact = merged_results[fdr_level == fdr_ref_level]
-    fdr_close = merged_results[np.abs(fdr_level - fdr_ref_level) <= 1]
+    fdr_error = merged_results.assign(fdr_error=(fdr_level - fdr_ref_level).abs())
+    fdr_error = fdr_error[fdr_error.fdr_error > 0]
+
     return {
         'merged_results': merged_results,
         'missing_results': missing_results,
@@ -69,26 +70,38 @@ def check_results(results_df, ref_results):
         'spectral_wrong': spectral_wrong,
         'chaos_wrong': chaos_wrong,
         'msm_wrong': msm_wrong,
-        'fdr_exact': fdr_exact,
-        'fdr_close': fdr_close,
+        'fdr_error': fdr_error,
     }
 
 
-
-def log_bad_results(merged_results, missing_results, spatial_wrong, spectral_wrong, chaos_wrong, msm_wrong, fdr_exact, fdr_close):
-    if len(missing_results):
-        logger.error(f'{len(missing_results)} missing annotations: \n{missing_results.head()}')
-    if len(spatial_wrong) > 5:
+def log_bad_results(merged_results, missing_results, spatial_wrong, spectral_wrong, chaos_wrong, msm_wrong, fdr_error):
+    fdr_any_error = fdr_error[lambda df: df.fdr_error > 0]
+    fdr_big_error = fdr_error[lambda df: df.fdr_error > 1]
+    results = [
+        # Name, Maximum allowed, Actual value, Extra data
+        ('Missing annotations', 0, len(missing_results), missing_results.head()),
         # A small number of results are off by up to 1% due to an algorithm change since they were processed
         # Annotations with fewer than 4 ion images now have slightly higher spectral score than before
-        logger.error(f'{len(spatial_wrong)} annotations with incorrect spatial metric:\n{spatial_wrong.head()}')
-    if len(spectral_wrong):
-        logger.error(f'{len(spectral_wrong)} annotations with incorrect spectral metric:\n{spectral_wrong.head()}')
-    if len(chaos_wrong):
-        logger.error(f'{len(chaos_wrong)} annotations with incorrect chaos metric:\n{chaos_wrong.head()}')
-    if len(msm_wrong):
-        logger.error(f'{len(msm_wrong)} annotations with incorrect MSM:\n{msm_wrong.head()}')
-    if len(fdr_exact) < len(merged_results) * 0.75:
-        logger.error(f'Not enough annotations with matching FDR: {len(fdr_exact)} out of {len(merged_results)}')
-    if len(fdr_close) < len(merged_results) * 0.9:
-        logger.error(f'Not enough annotations with FDR within tolerance: {len(fdr_close)} out of {len(merged_results)}')
+        ('Incorrect spatial metric', 0, len(spatial_wrong), spatial_wrong.head()),
+        ('Incorrect spectral metric', 5, len(spectral_wrong), spectral_wrong.head()),
+        ('Incorrect chaos metric', 0, len(chaos_wrong), chaos_wrong.head()),
+        ('Incorrect MSM', 0, len(msm_wrong), msm_wrong.head()),
+        # FDR can vary significantly depending on which decoy adducts were chosen.
+        ('FDR changed', len(merged_results) * 0.25, len(fdr_any_error), fdr_any_error.head()),
+        ('FDR changed significantly', len(merged_results) * 0.1, len(fdr_big_error), fdr_big_error.head()),
+    ]
+    failed_results = []
+    for result_name, threshold, value, data in results:
+        if value <= threshold:
+            logger.info(f'{result_name}: {value} (PASS)')
+        else:
+            logger.error(f'{result_name}: {value} (FAIL)')
+            failed_results.append((result_name, data))
+
+    for result_name, data in failed_results:
+        logger.error(f'{result_name} extra info:\n{str(data)}\n')
+
+    if not failed_results:
+        logger.info('All checks pass')
+    else:
+        logger.error(f'{len(failed_results)} checks failed')
