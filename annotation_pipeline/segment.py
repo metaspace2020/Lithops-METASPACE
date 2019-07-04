@@ -17,6 +17,15 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
         for i in range(n):
             yield l[size * i:size * (i + 1)]
 
+    def _upload_chunk(ch_i, sp_mz_int_buf):
+        chunk = msgpack.dumps(sp_mz_int_buf)
+        size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
+        logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
+        cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
+                              Key=keys[ch_i],
+                              Body=chunk)
+        logger.info(f'Spectra chunk {ch_i} finished')
+
     cos_client = get_ibm_cos_client(config)
 
     sp_id_to_idx = get_pixel_indices(coordinates)
@@ -33,33 +42,28 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
     logger.info(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
     keys = [f'{input_data["ds_chunks"]}/{ch_i}.msgpack' for ch_i in range(len(sp_i_lower_bounds))]
 
-    for ch_i, coord_chunk in enumerate(coord_chunk_it):
-        logger.info(f'Parsing spectra chunk {ch_i}')
-        sp_i = sp_i_lower_bounds[ch_i]
-        sp_inds_list, mzs_list, ints_list = [], [], []
-        for x, y in coord_chunk:
-            mzs_, ints_ = imzml_parser.getspectrum(sp_i)
-            mzs_, ints_ = map(np.array, [mzs_, ints_])
-            sp_idx = sp_id_to_idx[sp_i]
-            sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
-            mzs_list.append(mzs_)
-            ints_list.append(ints_)
-            sp_i += 1
+    with ThreadPoolExecutor() as ex:
+        for ch_i, coord_chunk in enumerate(coord_chunk_it):
+            logger.info(f'Parsing spectra chunk {ch_i}')
+            sp_i = sp_i_lower_bounds[ch_i]
+            sp_inds_list, mzs_list, ints_list = [], [], []
+            for x, y in coord_chunk:
+                mzs_, ints_ = imzml_parser.getspectrum(sp_i)
+                mzs_, ints_ = map(np.array, [mzs_, ints_])
+                sp_idx = sp_id_to_idx[sp_i]
+                sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
+                mzs_list.append(mzs_)
+                ints_list.append(ints_)
+                sp_i += 1
 
-        dtype = imzml_parser.mzPrecision
-        mzs = np.concatenate(mzs_list)
-        by_mz = np.argsort(mzs)
-        sp_mz_int_buf = np.array([np.concatenate(sp_inds_list)[by_mz],
-                                  mzs[by_mz],
-                                  np.concatenate(ints_list)[by_mz]], dtype).T
+            dtype = imzml_parser.mzPrecision
+            mzs = np.concatenate(mzs_list)
+            by_mz = np.argsort(mzs)
+            sp_mz_int_buf = np.array([np.concatenate(sp_inds_list)[by_mz],
+                                      mzs[by_mz],
+                                      np.concatenate(ints_list)[by_mz]], dtype).T
 
-        chunk = msgpack.dumps(sp_mz_int_buf)
-        size = sys.getsizeof(chunk)*(1/1024**2)
-        logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
-                              Key=keys[ch_i],
-                              Body=chunk)
-        logger.info(f'Spectra chunk {ch_i} finished')
+            ex.submit(_upload_chunk, ch_i, sp_mz_int_buf)
 
     return keys
 

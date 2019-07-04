@@ -5,8 +5,9 @@
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
-    "polarity": "-",
-    "isocalc_sigma": 0.00123792863514
+    "polarity": "+",
+    "isocalc_sigma": 0.001238,
+    "metaspace_id": "2016-09-21_16h06m53s"
   },
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
@@ -18,7 +19,7 @@
       "metabolomics/db/mol_db3.pickle",
       "metabolomics/db/mol_db4.pickle"
     ],
-    "adducts": ["","-H","+Cl"],
+    "adducts": ["", "+H", "+Na", "+K"],
     "modifiers": ["", "-H2O", "-CO2", "-NH3"]
   },
   "output": {

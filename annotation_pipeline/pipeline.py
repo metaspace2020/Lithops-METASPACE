@@ -6,6 +6,7 @@ import pywren_ibm_cloud as pywren
 from pyimzml.ImzMLParser import ImzMLParser
 import pandas as pd
 
+from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids
@@ -102,7 +103,6 @@ class Pipeline(object):
         images = {}
         ibm_cos = get_ibm_cos_client(self.config)
         for segm_i in range(self.centr_segm_n):
-            logger.info(f'Downloading pickled images #{segm_i}')
             obj = ibm_cos.get_object(Bucket=self.config['storage']['output_bucket'],
                                      Key=f'{self.output["formula_images"]}/{segm_i}.pickle')
 
@@ -110,3 +110,14 @@ class Pipeline(object):
             images.update(segm_images)
 
         return dict((formula_i, images[formula_i]) for formula_i in self.results_df.index)
+
+    def check_results(self):
+        results_df = self.get_results()
+        metaspace_options = self.config.get('metaspace_options', {})
+        reference_results = get_reference_results(metaspace_options, self.input_data['metaspace_id'])
+
+        checked_results = check_results(results_df, reference_results)
+
+        log_bad_results(**checked_results)
+        return checked_results
+

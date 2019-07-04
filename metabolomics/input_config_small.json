@@ -6,7 +6,8 @@
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
-    "isocalc_sigma": 0.000693240035678
+    "isocalc_sigma": 0.000693240035678,
+    "metaspace_id": "2016-09-22_11h16m11s"
   },
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
