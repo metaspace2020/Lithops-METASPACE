@@ -28,7 +28,7 @@ with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
     ```
 
 2. Download the [sample data](https://s3.eu-de.cloud-object-storage.appdomain.cloud/pywren-annotation-pipeline-public/metabolomics.tar.gz) and extract it into 
-    this directory, merging it with the existing files. There should now be a `metabolomics/ds/AZ_` directory. 
+    this directory, merging it with the existing files. Verify that the directory structure has merged correctly by checking that the file `metabolomics/ds/CT26_xenograft/Image1_CT26.imzML` exists. 
 
 3. Copy `config.json.template` to `config.json` and edit it, filling in your IBM Cloud details. It is fine to use the same bucket in all places. 
 
