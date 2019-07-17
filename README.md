@@ -48,3 +48,8 @@ There are also 3 notebooks prepared for benchmarking that can be run with Jupyte
 3. [`experiment-3-large.ipynb`](./experiment-3-large.ipynb) - A stress test that runs the Serverless metabolite 
     annotation pipeline with a large dataset and many molecular databases.
     
+# Acknowledgements
+
+![image](https://user-images.githubusercontent.com/26366936/61350554-d62acf00-a85f-11e9-84b2-36312a35398e.png)
+
+This project has received funding from the European Union's Horizon 2020 research and innovation programme under grant agreement No 825184.
