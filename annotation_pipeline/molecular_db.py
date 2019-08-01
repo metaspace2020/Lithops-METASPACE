@@ -54,7 +54,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238, 
     iterdata = [[f'{bucket}/{formulas_chunks_prefix}/{chunk_i}.msgpack', chunk_i] for chunk_i in range(n_formulas_chunks)]
     futures = pw.map(calculate_peaks_for_chunk, iterdata)
     centroids_chunks_n = pw.get_result(futures)
-    append_pywren_stats(calculate_peaks_for_chunk.__name__, 2048, futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     return sum(centroids_chunks_n), n_formulas_chunks
 
@@ -105,8 +105,8 @@ def build_database(config, input_db, n_formulas_chunks=NUM_FORMULAS_CHUNKS):
     iterdata = [(f'{bucket}/{database}', [adduct], modifiers) for database in databases for adduct in adducts]
     futures = pw.map_reduce(generate_formulas, iterdata, store_formulas)
     num_formulas = pw.get_result(futures)
-    append_pywren_stats(generate_formulas.__name__, 2048, futures[:-1])
-    append_pywren_stats(store_formulas.__name__, 2048, futures[-1])
+    append_pywren_stats(futures[:-1], pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures[-1], pw.config['pywren']['runtime_memory'])
 
     return num_formulas, n_formulas_chunks
 

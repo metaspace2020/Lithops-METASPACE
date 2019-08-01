@@ -79,7 +79,7 @@ class Pipeline(object):
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
         futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
         formula_metrics_list = pw.get_result(futures)
-        append_pywren_stats(process_centr_segment.__name__, 2048, futures)
+        append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')

@@ -3,6 +3,7 @@ from pathlib import Path
 import numpy as np
 import ibm_boto3
 from ibm_botocore.client import Config
+import pandas as pd
 import os
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
@@ -70,7 +71,7 @@ def init_pywren_stats(filename='stats.csv'):
         csvfile.write('Function name,Actions number,Actions memory,Average runtime' + '\n')
 
 
-def append_pywren_stats(func_name, runtime_memory, futures, filename='stats.csv'):
+def append_pywren_stats(futures, runtime_memory, filename='stats.csv'):
     if not os.path.isfile(filename):
         return
 
@@ -78,12 +79,20 @@ def append_pywren_stats(func_name, runtime_memory, futures, filename='stats.csv'
         futures = [futures]
 
     actions_num = len(futures)
-    # actions_mem = map_futures[0].run_status['runtime_memory']
-    actions_mem = runtime_memory
+    func_name = futures[0].invoke_status['func_name']
     average_runtime = np.average([future.run_status['exec_time'] for future in futures])
 
     with open(filename, 'a') as csvfile:
-        csvfile.write(f'{func_name},{actions_num},{actions_mem},{average_runtime}\n')
+        csvfile.write(f'{func_name},{actions_num},{runtime_memory},{average_runtime}\n')
+
+
+def display_pywren_stats(filename='stats.csv'):
+    stats = pd.read_csv(filename)
+    print(stats, '\n')
+
+    unit_price_in_dollars = 0.000017
+    calc_func = lambda row: row[1] * (row[2]/1024) * row[3] * unit_price_in_dollars
+    print('Total PyWren cost:', np.sum(np.apply_along_axis(calc_func, 1, stats)), '$')
 
 
 def remove_pywren_stats(filename='stats.csv'):
