@@ -146,14 +146,14 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
         futures = pw.map(_merge, range(len(mz_segments)))
         pw.get_result(futures)
-        return _merge.__name__, futures
+        return pw.config['pywren']['runtime_memory'], futures
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
     futures = pw.map_reduce(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}', merge_spectra_chunk_segments)
-    inner_func_name, inner_futures = pw.get_result(futures)
-    append_pywren_stats(segment_spectra_chunk.__name__, 1024, futures[:-1])
-    append_pywren_stats(inner_func_name, 512, inner_futures)
-    append_pywren_stats(merge_spectra_chunk_segments.__name__, 1024, futures[-1])
+    inner_runtime_memory, inner_futures = pw.get_result(futures)
+    append_pywren_stats(futures[:-1], pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(inner_futures, inner_runtime_memory)
+    append_pywren_stats(futures[-1], pw.config['pywren']['runtime_memory'])
 
 
 def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz_min, mz_max, ds_segm_n, ds_segm_size_mb):
@@ -175,7 +175,7 @@ def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
     futures = pw.map(get_clipped_centroids_df_shape, db_prefix_bucket_key)
     centr_n = sum(pw.get_result(futures))
-    append_pywren_stats(get_clipped_centroids_df_shape.__name__, 512, futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     ds_size_mb = ds_segm_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
@@ -210,8 +210,8 @@ def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=4096)
     futures = pw.map_reduce(clip_centroids_df_per_chunk, db_prefix_bucket_key, segment_centr_df)
     pw.get_result(futures)
-    append_pywren_stats(clip_centroids_df_per_chunk.__name__, 4096, futures[:-1])
-    append_pywren_stats(segment_centr_df.__name__, 4096, futures[-1])
+    append_pywren_stats(futures[:-1], pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures[-1], pw.config['pywren']['runtime_memory'])
     logger.info(f'Segmented centroids into {centr_segm_n} segments')
 
     return centr_n, centr_segm_n

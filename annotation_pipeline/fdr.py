@@ -62,7 +62,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(build_ranking, [(job_i, *job) for job_i, job in enumerate(ranking_jobs)])
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
-    append_pywren_stats(build_ranking.__name__, 2048, futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), key=ranking_keys)
@@ -113,6 +113,6 @@ def calculate_fdrs(config, input_data, rankings_df):
 
     futures = pw.map(merge_rankings, ranking_jobs)
     results = pw.get_result(futures)
-    append_pywren_stats(merge_rankings.__name__, 2048, futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     return pd.concat(results)
