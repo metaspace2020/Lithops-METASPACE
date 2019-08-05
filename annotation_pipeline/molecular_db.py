@@ -76,13 +76,13 @@ def build_database(config, input_db):
         if None in formulas:
             formulas.remove(None)
 
-        chunk = pd.DataFrame(sorted(formulas), columns=['formula'])
+        chunk = pd.DataFrame(sorted(set(formulas)), columns=['formula'])
         chunk.index.name = 'formula_i'
         database_name = key.split('/')[-1].split('.')[0]
         chunk_key = f'{formulas_chunks_prefix}/{database_name}/{adduct}.msgpack'
         ibm_cos.put_object(Bucket=bucket, Key=chunk_key, Body=chunk.to_msgpack())
 
-        return len(formulas)
+        return len(chunk)
 
     adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
     modifiers = input_db['modifiers']
