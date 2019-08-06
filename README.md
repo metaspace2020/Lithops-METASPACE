@@ -48,6 +48,17 @@ There are also 3 notebooks prepared for benchmarking that can be run with Jupyte
 3. [`experiment-3-large.ipynb`](./experiment-3-large.ipynb) - A stress test that runs the Serverless metabolite 
     annotation pipeline with a large dataset and many molecular databases.
     
+### Example datasets
+
+| Dataset                             | Author                            | Config file |                  |
+| ----------------------------------- | --------------------------------- | ----------- | ---------------- |
+| [Brain02_Bregma1-42_02](https://metaspace2020.eu/annotations?ds=2016-09-22_11h16m11s) | Régis Lavigne, University of Rennes 1 | `input_config_small.json` | [Download](https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/ds/Brain02_Bregma1-42_02.zip) (72MiB) |
+| [AZ_Rat_Brains](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m53s) | Nicole Strittmatter, AstraZeneca | `input_config_big.json` | [Download](https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/ds/AZ_Rat_brains.zip) (755MiB) |
+| [CT26_xenograft](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m49s) | Nicole Strittmatter, AstraZeneca | `input_config_huge.json` | [Download](https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/ds/CT26_xenograft.zip) (1.9GiB) |
+| [Mouse brain test434x902](https://metaspace2020.eu/annotations?ds=2019-07-31_17h35m11s) | Dhaka Bhandari, Justus Liebig University Giessen | `input_config_huge2.json` | [Download](https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-lachlan-public/metabolomics/ds/Mouse_brain.zip) (4.4GiB) |
+
+These datasets can be used by extracting them into the `metabolomics/ds` directory and changing an experiment notebook to use the respective `input_config***.json` file.
+    
 # Acknowledgements
 
 ![image](https://user-images.githubusercontent.com/26366936/61350554-d62acf00-a85f-11e9-84b2-36312a35398e.png)
