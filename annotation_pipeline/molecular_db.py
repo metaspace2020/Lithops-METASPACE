@@ -5,6 +5,7 @@ from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
+import hashlib
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, clean_from_cos
@@ -71,7 +72,11 @@ def build_database(config, input_db):
     databases = input_db['databases']
 
     max_n_segments = 256
-    hash_formula_to_segment = lambda formula: hash(formula) % max_n_segments
+
+    def hash_formula_to_segment(formula):
+        m = hashlib.md5()
+        m.update(formula.encode('utf-8'))
+        return int(m.hexdigest(), 16) % max_n_segments
 
     def generate_formulas(key, data_stream, ibm_cos):
         database_name = key.split('/')[-1].split('.')[0]
