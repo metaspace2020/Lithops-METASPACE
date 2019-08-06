@@ -66,36 +66,79 @@ def build_database(config, input_db):
     formulas_chunks_prefix = input_db["formulas_chunks"]
     clean_from_cos(config, bucket, formulas_chunks_prefix)
 
-    def generate_formulas(key, data_stream, adduct, modifiers, ibm_cos):
-        mols = pickle.loads(data_stream.read())
-        formulas = set()
-
-        for modifier in modifiers:
-            formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
-
-        if None in formulas:
-            formulas.remove(None)
-
-        chunk = pd.DataFrame(sorted(set(formulas)), columns=['formula'])
-        chunk.index.name = 'formula_i'
-        database_name = key.split('/')[-1].split('.')[0]
-        chunk_key = f'{formulas_chunks_prefix}/{database_name}/{adduct}.msgpack'
-        ibm_cos.put_object(Bucket=bucket, Key=chunk_key, Body=chunk.to_msgpack())
-
-        return len(chunk)
-
     adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-    iterdata = [(f'{bucket}/{database}', adduct, modifiers) for database in databases for adduct in adducts]
-    futures = pw.map(generate_formulas, iterdata)
-    nums_formulas = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    max_n_segments = 256
+    hash_formula_to_segment = lambda formula: hash(formula) % max_n_segments
 
-    num_formulas = sum(nums_formulas)
-    n_formulas_chunks = len(nums_formulas)
+    def generate_formulas(key, data_stream, ibm_cos):
+        database_name = key.split('/')[-1].split('.')[0]
+        mols = pickle.loads(data_stream.read())
+        formulas = set()
+
+        for adduct in adducts:
+            for modifier in modifiers:
+                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+
+        if None in formulas:
+            formulas.remove(None)
+
+        formulas_segments = {}
+        for formula in formulas:
+            segm_i = hash_formula_to_segment(formula)
+            if segm_i in formulas_segments:
+                formulas_segments[segm_i].append(formula)
+            else:
+                formulas_segments[segm_i] = [formula]
+
+        def _generate(segm_i):
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{database_name}.pickle',
+                               Body=pickle.dumps(formulas_segments[segm_i]))
+
+        segments = [segm_i for segm_i in formulas_segments]
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            pool.map(_generate, segments)
+
+        return segments
+
+    def deduplicate_formulas(results):
+
+        def _deduplicate(segm_i, ibm_cos):
+            objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
+            keys = [obj['Key'] for obj in objs['Contents']]
+
+            segm = set()
+            for key in keys:
+                segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+                segm.update(segm_formulas_chunk)
+
+            segm = pd.DataFrame(sorted(segm), columns=['formula'])
+            segm.index.name = 'formula_i'
+
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
+                               Body=segm.to_msgpack())
+
+            temp_formatted_keys = {'Objects': [{'Key': key} for key in keys]}
+            ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
+
+            return len(segm)
+
+        segments = list(set().union(*results))
+        pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+        futures = pw.map(_deduplicate, segments)
+        return pw.get_result(futures)
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    iterdata = [f'{bucket}/{database}' for database in databases]
+    futures = pw.map_reduce(generate_formulas, iterdata, deduplicate_formulas)
+    results = pw.get_result(futures)
+
+    num_formulas = sum(results)
+    n_formulas_chunks = len(results)
     return num_formulas, n_formulas_chunks
 
 
