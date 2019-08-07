@@ -77,14 +77,13 @@ def build_database(config, input_db):
         m.update(formula.encode('utf-8'))
         return int(m.hexdigest(), 16) % N_FORMULAS_SEGMENTS
 
-    def generate_formulas(key, data_stream, ibm_cos):
+    def generate_formulas(key, data_stream, adduct, ibm_cos):
         database_name = key.split('/')[-1].split('.')[0]
         mols = pickle.loads(data_stream.read())
         formulas = set()
 
-        for adduct in adducts:
-            for modifier in modifiers:
-                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+        for modifier in modifiers:
+            formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
         if None in formulas:
             formulas.remove(None)
@@ -108,37 +107,32 @@ def build_database(config, input_db):
 
         return segments_n
 
-    def deduplicate_formulas(results):
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    iterdata = [(f'{bucket}/{database}', adduct) for database in databases for adduct in adducts]
+    futures = pw.map(generate_formulas, iterdata)
+    segments_n = set().union(*pw.get_result(futures))
 
-        def _deduplicate(segm_i, ibm_cos):
-            objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
-            keys = [obj['Key'] for obj in objs['Contents']]
+    def _deduplicate(segm_i, ibm_cos):
+        objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
+        keys = [obj['Key'] for obj in objs['Contents']]
 
-            segm = set()
-            for key in keys:
-                segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
-                segm.update(segm_formulas_chunk)
+        segm = set()
+        for key in keys:
+            segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+            segm.update(segm_formulas_chunk)
 
-            segm = pd.DataFrame(sorted(segm), columns=['formula'])
-            segm.index.name = 'formula_i'
+        segm = pd.DataFrame(sorted(segm), columns=['formula'])
+        segm.index.name = 'formula_i'
 
-            ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
-                               Body=segm.to_msgpack())
+        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/')
+        ibm_cos.put_object(Bucket=bucket,
+                           Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
+                           Body=segm.to_msgpack())
 
-            temp_formatted_keys = {'Objects': [{'Key': key} for key in keys]}
-            ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
-
-            return len(segm)
-
-        pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-        segments_n = set().union(*results)
-        futures = pw.map(_deduplicate, segments_n)
-        return pw.get_result(futures)
+        return len(segm)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [f'{bucket}/{database}' for database in databases]
-    futures = pw.map_reduce(generate_formulas, iterdata, deduplicate_formulas)
+    futures = pw.map(_deduplicate, segments_n)
     results = pw.get_result(futures)
 
     num_formulas = sum(results)
