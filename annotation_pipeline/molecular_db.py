@@ -12,6 +12,7 @@ from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, c
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
+N_FORMULAS_SEGMENTS = 256
 
 
 def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
@@ -71,21 +72,18 @@ def build_database(config, input_db):
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
-    max_n_segments = 256
-
     def hash_formula_to_segment(formula):
         m = hashlib.md5()
         m.update(formula.encode('utf-8'))
-        return int(m.hexdigest(), 16) % max_n_segments
+        return int(m.hexdigest(), 16) % N_FORMULAS_SEGMENTS
 
-    def generate_formulas(key, data_stream, ibm_cos):
+    def generate_formulas(key, data_stream, adduct, ibm_cos):
         database_name = key.split('/')[-1].split('.')[0]
         mols = pickle.loads(data_stream.read())
         formulas = set()
 
-        for adduct in adducts:
-            for modifier in modifiers:
-                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+        for modifier in modifiers:
+            formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
         if None in formulas:
             formulas.remove(None)
@@ -98,16 +96,16 @@ def build_database(config, input_db):
             else:
                 formulas_segments[segm_i] = [formula]
 
-        def _generate(segm_i):
+        def _store(segm_i):
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{database_name}.pickle',
+                               Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{database_name}/{adduct}.pickle',
                                Body=pickle.dumps(formulas_segments[segm_i]))
 
-        segments = [segm_i for segm_i in formulas_segments]
+        segments_n = [segm_i for segm_i in formulas_segments]
         with ThreadPoolExecutor(max_workers=128) as pool:
-            pool.map(_generate, segments)
+            pool.map(_store, segments_n)
 
-        return segments
+        return segments_n
 
     def deduplicate_formulas(results):
 
@@ -132,13 +130,13 @@ def build_database(config, input_db):
 
             return len(segm)
 
-        segments = list(set().union(*results))
         pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-        futures = pw.map(_deduplicate, segments)
+        segments_n = set().union(*results)
+        futures = pw.map(_deduplicate, segments_n)
         return pw.get_result(futures)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [f'{bucket}/{database}' for database in databases]
+    iterdata = [(f'{bucket}/{database}', adduct) for database in databases for adduct in adducts]
     futures = pw.map_reduce(generate_formulas, iterdata, deduplicate_formulas)
     results = pw.get_result(futures)
 
@@ -147,14 +145,14 @@ def build_database(config, input_db):
     return num_formulas, n_formulas_chunks
 
 
-def get_formula_id_dfs(ibm_cos, bucket, formulas_chunks_prefix, n_formulas_chunks=256):
+def get_formula_id_dfs(ibm_cos, bucket, formulas_chunks_prefix):
     def get_formula_chunk(formula_chunk_key):
         data_stream = ibm_cos.get_object(Bucket=bucket, Key=formula_chunk_key)['Body']
         formula_chunk = pd.read_msgpack(data_stream._raw_stream)
         return formula_chunk
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        iterdata = [f'{formulas_chunks_prefix}/{chunk_i}.msgpack' for chunk_i in range(n_formulas_chunks)]
+        iterdata = [f'{formulas_chunks_prefix}/{chunk_i}.msgpack' for chunk_i in range(N_FORMULAS_SEGMENTS)]
         results = list(pool.map(get_formula_chunk, iterdata))
 
     formulas = pd.concat(results)
