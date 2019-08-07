@@ -35,7 +35,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
 
-        chunk_i = '/'.join(key.split('/')[-2:]).split('.')[0]
+        chunk_i = key.split('/')[-1].split('.')[0]
         centroids_chunk_key = f'{centroids_chunks_prefix}/{chunk_i}.msgpack'
         ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
 
