@@ -1,13 +1,13 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/CT26_xenograft",
-    "ds_chunks": "metabolomics/tmp/ds_chunks/CT26_xenograft",
+    "path": "metabolomics/ds/Mouse_brain",
+    "ds_chunks": "metabolomics/tmp/ds_chunks/Mouse_brain",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
-    "isocalc_sigma": 0.00123792863514,
-    "metaspace_id": "2016-09-21_16h06m49s"
+    "isocalc_sigma": 0.002476,
+    "metaspace_id": "2016-09-22_11h16m11s"
   },
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
