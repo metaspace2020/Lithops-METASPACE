@@ -77,13 +77,14 @@ def build_database(config, input_db):
         m.update(formula.encode('utf-8'))
         return int(m.hexdigest(), 16) % N_FORMULAS_SEGMENTS
 
-    def generate_formulas(key, data_stream, adduct, ibm_cos):
+    def generate_formulas(key, data_stream, ibm_cos):
         database_name = key.split('/')[-1].split('.')[0]
         mols = pickle.loads(data_stream.read())
         formulas = set()
 
-        for modifier in modifiers:
-            formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+        for adduct in adducts:
+            for modifier in modifiers:
+                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
         if None in formulas:
             formulas.remove(None)
@@ -136,7 +137,7 @@ def build_database(config, input_db):
         return pw.get_result(futures)
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [(f'{bucket}/{database}', adduct) for database in databases for adduct in adducts]
+    iterdata = [f'{bucket}/{database}' for database in databases]
     futures = pw.map_reduce(generate_formulas, iterdata, deduplicate_formulas)
     results = pw.get_result(futures)
 
