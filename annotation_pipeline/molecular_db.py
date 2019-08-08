@@ -6,6 +6,7 @@ import pywren_ibm_cloud as pywren
 import pandas as pd
 import pickle
 import hashlib
+import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, clean_from_cos
@@ -72,10 +73,12 @@ def build_database(config, input_db):
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
+    N_HASH_SEGMENTS = 32  # should be less than N_FORMULAS_SEGMENTS
+
     def hash_formula_to_segment(formula):
         m = hashlib.md5()
         m.update(formula.encode('utf-8'))
-        return int(m.hexdigest(), 16) % N_FORMULAS_SEGMENTS
+        return int(m.hexdigest(), 16) % N_HASH_SEGMENTS
 
     def generate_formulas(key, data_stream, adduct, ibm_cos):
         database_name = key.split('/')[-1].split('.')[0]
@@ -113,7 +116,7 @@ def build_database(config, input_db):
     segments_n = set().union(*pw.get_result(futures))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    def _deduplicate(segm_i, ibm_cos):
+    def deduplicate_formulas(segm_i, ibm_cos):
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
         keys = [obj['Key'] for obj in objs['Contents']]
 
@@ -121,24 +124,31 @@ def build_database(config, input_db):
         for key in keys:
             segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
             segm.update(segm_formulas_chunk)
+        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/')
 
         segm = pd.DataFrame(sorted(segm), columns=['formula'])
         segm.index.name = 'formula_i'
+        n_threads = N_FORMULAS_SEGMENTS // N_HASH_SEGMENTS
+        subsegm_size = math.ceil(len(segm) / n_threads)
+        segm_list = [segm[i:i+subsegm_size] for i in range(0, segm.shape[0], subsegm_size)]
 
-        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/')
-        ibm_cos.put_object(Bucket=bucket,
-                           Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
-                           Body=segm.to_msgpack())
+        def _store(segm_j):
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{formulas_chunks_prefix}/{segm_i}/{segm_j}.msgpack',
+                               Body=segm_list[segm_j].to_msgpack())
 
-        return len(segm)
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            pool.map(_store, range(n_threads))
+
+        return [len(segm) for segm in segm_list]
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(_deduplicate, segments_n)
+    futures = pw.map(deduplicate_formulas, segments_n)
     results = pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    num_formulas = sum(results)
-    n_formulas_chunks = len(results)
+    num_formulas = sum([sum(result) for result in results])
+    n_formulas_chunks = sum([len(result) for result in results])
     return num_formulas, n_formulas_chunks
 
 
