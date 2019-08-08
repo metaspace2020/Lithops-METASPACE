@@ -111,6 +111,7 @@ def build_database(config, input_db):
     iterdata = [(f'{bucket}/{database}', adduct) for database in databases for adduct in adducts]
     futures = pw.map(generate_formulas, iterdata)
     segments_n = set().union(*pw.get_result(futures))
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     def _deduplicate(segm_i, ibm_cos):
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
@@ -134,6 +135,7 @@ def build_database(config, input_db):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(_deduplicate, segments_n)
     results = pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     num_formulas = sum(results)
     n_formulas_chunks = len(results)
