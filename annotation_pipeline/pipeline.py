@@ -45,9 +45,6 @@ class Pipeline(object):
         self.sp_n = len(self.coordinates)
         logger.info(f'Parsed imzml: {self.sp_n} spectra found')
 
-        ds_config = json.load(open(Path(self.input_data['path']) / 'config.json'))
-        self.isotope_gen_config = ds_config['isotope_generation']
-
     def split_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"])
         self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.sp_n, self.imzml_parser, self.coordinates)
