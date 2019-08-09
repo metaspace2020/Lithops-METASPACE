@@ -80,13 +80,19 @@ def build_database(config, input_db):
         m.update(formula.encode('utf-8'))
         return int(m.hexdigest(), 16) % N_HASH_SEGMENTS
 
-    def generate_formulas(key, data_stream, adduct, ibm_cos):
-        database_name = key.split('/')[-1].split('.')[0]
-        mols = pickle.loads(data_stream.read())
+    def generate_formulas(adduct, ibm_cos):
+
+        def _get_mols(mols_key):
+            return pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=mols_key)['Body'].read())
+
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            mols_list = list(pool.map(_get_mols, databases))
+
         formulas = set()
 
-        for modifier in modifiers:
-            formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+        for mols in mols_list:
+            for modifier in modifiers:
+                formulas.update(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
         if None in formulas:
             formulas.remove(None)
@@ -101,7 +107,7 @@ def build_database(config, input_db):
 
         def _store(segm_i):
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{database_name}/{adduct}.pickle',
+                               Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{adduct}.pickle',
                                Body=pickle.dumps(formulas_segments[segm_i]))
 
         segments_n = [segm_i for segm_i in formulas_segments]
@@ -111,8 +117,7 @@ def build_database(config, input_db):
         return segments_n
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = [(f'{bucket}/{database}', adduct) for database in databases for adduct in adducts]
-    futures = pw.map(generate_formulas, iterdata)
+    futures = pw.map(generate_formulas, adducts)
     segments_n = set().union(*pw.get_result(futures))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
