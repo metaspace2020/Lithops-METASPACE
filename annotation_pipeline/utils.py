@@ -32,8 +32,9 @@ def upload_to_cos(cos_client, src, target_bucket, target_key):
     logger.info('Copy completed for {}/{}'.format(target_bucket, target_key))
 
 
-def clean_from_cos(config, bucket, prefix):
-    cos_client = get_ibm_cos_client(config)
+def clean_from_cos(config, bucket, prefix, cos_client=None):
+    if not cos_client:
+        cos_client = get_ibm_cos_client(config)
     objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
     while 'Contents' in objs:
         keys = [obj['Key'] for obj in objs['Contents']]

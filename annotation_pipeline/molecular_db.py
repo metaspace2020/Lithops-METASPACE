@@ -129,7 +129,7 @@ def build_database(config, input_db):
         for key in keys:
             segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
             segm.update(segm_formulas_chunk)
-        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/')
+        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
 
         segm = pd.DataFrame(sorted(segm), columns=['formula'])
         segm.index.name = 'formula_i'

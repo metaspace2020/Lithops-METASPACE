@@ -139,7 +139,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
                 segm_spectra_chunk = msgpack.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
                 segm.append(segm_spectra_chunk)
 
-            clean_from_cos(config, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/')
+            clean_from_cos(config, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
             ibm_cos.put_object(Bucket=bucket,
                                Key=f'{ds_segments_prefix}/{segm_i}.msgpack',
                                Body=msgpack.dumps(segm))
