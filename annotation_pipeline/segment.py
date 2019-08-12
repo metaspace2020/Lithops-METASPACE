@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import sys
-from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats
+from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, clean_from_cos
 from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
 import msgpack_numpy as msgpack
@@ -122,38 +122,32 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_segment_spectra_chunk, mz_segments)
 
-    def merge_spectra_chunk_segments(results):
-
-        def _merge(segm_i, ibm_cos):
-            print(f'Merging segment {segm_i} spectra chunks')
-
-            objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{ds_segments_prefix}/chunk/{segm_i}/')
-            if 'Contents' in objs:
-                keys = [obj['Key'] for obj in objs['Contents']]
-
-                segm = []
-                for key in keys:
-                    segm_spectra_chunk = msgpack.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
-                    segm.append(segm_spectra_chunk)
-
-                ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{ds_segments_prefix}/{segm_i}.msgpack',
-                                   Body=msgpack.dumps(segm))
-
-                temp_formatted_keys = {'Objects': [{'Key': key} for key in keys]}
-                ibm_cos.delete_objects(Bucket=bucket, Delete=temp_formatted_keys)
-
-        pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
-        futures = pw.map(_merge, range(len(mz_segments)))
-        pw.get_result(futures)
-        return pw.config['pywren']['runtime_memory'], futures
-
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
-    futures = pw.map_reduce(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}', merge_spectra_chunk_segments)
-    inner_runtime_memory, inner_futures = pw.get_result(futures)
-    append_pywren_stats(futures[:-1], pw.config['pywren']['runtime_memory'])
-    append_pywren_stats(inner_futures, inner_runtime_memory)
-    append_pywren_stats(futures[-1], pw.config['pywren']['runtime_memory'])
+    futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}')
+    pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+
+    def merge_spectra_chunk_segments(segm_i, ibm_cos):
+        print(f'Merging segment {segm_i} spectra chunks')
+
+        objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{ds_segments_prefix}/chunk/{segm_i}/')
+        if 'Contents' in objs:
+            keys = [obj['Key'] for obj in objs['Contents']]
+
+            segm = []
+            for key in keys:
+                segm_spectra_chunk = msgpack.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+                segm.append(segm_spectra_chunk)
+
+            clean_from_cos(config, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{ds_segments_prefix}/{segm_i}.msgpack',
+                               Body=msgpack.dumps(segm))
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=512)
+    futures = pw.map(merge_spectra_chunk_segments, range(len(mz_segments)))
+    pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
 
 def segment_centroids(config, bucket, centr_chunks_prefix, centr_segm_prefix, mz_min, mz_max, ds_segm_n, ds_segm_size_mb):
