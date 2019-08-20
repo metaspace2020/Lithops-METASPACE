@@ -1,13 +1,13 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/Mouse_brain",
-    "ds_chunks": "metabolomics/tmp/ds_chunks/Mouse_brain",
+    "path": "metabolomics/ds/X089-Mousebrain",
+    "ds_chunks": "metabolomics/tmp/ds_chunks/X089-Mousebrain",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
-    "isocalc_sigma": 0.002476,
-    "metaspace_id": "2019-07-31_17h35m11s"
+    "isocalc_sigma": 0.001238,
+    "metaspace_id": "2019-08-19_11h28m42s"
   },
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
