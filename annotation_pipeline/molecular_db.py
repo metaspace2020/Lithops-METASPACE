@@ -121,7 +121,7 @@ def build_database(config, input_db):
     segments_n = set().union(*pw.get_result(futures))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    def deduplicate_formulas(segm_i, ibm_cos):
+    def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
         keys = [obj['Key'] for obj in objs['Contents']]
 
@@ -129,10 +129,29 @@ def build_database(config, input_db):
         for key in keys:
             segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
             segm.update(segm_formulas_chunk)
-        clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
 
-        segm = pd.DataFrame(sorted(segm), columns=['formula'])
-        segm.index.name = 'formula_i'
+        if clean:
+            clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
+
+        return segm
+
+    def get_formulas_number_per_chunk(segm_i, ibm_cos):
+        segm = deduplicate_formulas_segment(segm_i, ibm_cos, clean=False)
+        return len(segm)
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    futures = pw.map(get_formulas_number_per_chunk, segments_n)
+    formulas_nums = pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+
+    def store_formulas_segment(segm_i, ibm_cos):
+        segm = deduplicate_formulas_segment(segm_i, ibm_cos)
+        formula_i_start = sum(formulas_nums[:segm_i])
+        formula_i_end = formula_i_start + len(segm)
+        segm = pd.DataFrame(sorted(segm),
+                            columns=['formula'],
+                            index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
+
         n_threads = N_FORMULAS_SEGMENTS // N_HASH_SEGMENTS
         subsegm_size = math.ceil(len(segm) / n_threads)
         segm_list = [segm[i:i+subsegm_size] for i in range(0, segm.shape[0], subsegm_size)]
@@ -148,11 +167,11 @@ def build_database(config, input_db):
         return [len(segm) for segm in segm_list]
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(deduplicate_formulas, segments_n)
+    futures = pw.map(store_formulas_segment, segments_n)
     results = pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    num_formulas = sum([sum(result) for result in results])
+    num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
     return num_formulas, n_formulas_chunks
 
@@ -163,9 +182,10 @@ def get_formula_id_dfs(ibm_cos, bucket, formulas_chunks_prefix):
         formula_chunk = pd.read_msgpack(data_stream._raw_stream)
         return formula_chunk
 
+    objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/')
+    keys = [obj['Key'] for obj in objs['Contents']]
     with ThreadPoolExecutor(max_workers=128) as pool:
-        iterdata = [f'{formulas_chunks_prefix}/{chunk_i}.msgpack' for chunk_i in range(N_FORMULAS_SEGMENTS)]
-        results = list(pool.map(get_formula_chunk, iterdata))
+        results = list(pool.map(get_formula_chunk, keys))
 
     formulas = pd.concat(results)
     formula_to_id = dict(zip(formulas.formula, formulas.index))
