@@ -146,9 +146,11 @@ def build_database(config, input_db):
 
     def store_formulas_segment(segm_i, ibm_cos):
         segm = deduplicate_formulas_segment(segm_i, ibm_cos)
-        segm = pd.DataFrame(enumerate(sorted(segm)), columns=['formula_i', 'formula'])
-        segm['formula_i'] = segm['formula_i'].apply(lambda i: i + sum(formulas_nums[:segm_i]))
-        segm.set_index('formula_i', inplace=True)
+        formula_i_start = sum(formulas_nums[:segm_i])
+        formula_i_end = formula_i_start + len(segm)
+        segm = pd.DataFrame(sorted(segm),
+                            columns=['formula'],
+                            index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
 
         n_threads = N_FORMULAS_SEGMENTS // N_HASH_SEGMENTS
         subsegm_size = math.ceil(len(segm) / n_threads)
