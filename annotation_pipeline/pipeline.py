@@ -34,7 +34,7 @@ class Pipeline(object):
 
     def __call__(self, *args, **kwargs):
         self.load_ds()
-        #self.split_ds()
+        self.split_ds()
         self.segment_ds()
         self.segment_centroids()
         self.annotate()
@@ -65,14 +65,14 @@ class Pipeline(object):
                                                    self.input_db["centroids_chunks"],
                                                    self.input_db["clipped_centroids_chunks"], mz_min, mz_max)
 
-        self.db_segments_bounds = define_db_segments(self.config, self.config["storage"]["db_bucket"],
+        self.db_segm_lower_bounds = define_db_segments(self.config, self.config["storage"]["db_bucket"],
                                                      self.input_db["clipped_centroids_chunks"], self.centr_n,
                                                      self.ds_segm_n, self.ds_segm_size_mb)
-        self.centr_segm_n = len(self.db_segments_bounds)
+        self.centr_segm_n = len(self.db_segm_lower_bounds)
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
         segment_centroids(self.config, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"],
-                          self.input_db["centroids_segments"], self.db_segments_bounds)
+                          self.input_db["centroids_segments"], self.db_segm_lower_bounds)
 
     def annotate(self):
         logger.info('Annotating...')
