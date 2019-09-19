@@ -1,6 +1,4 @@
-import json
 import pickle
-from pathlib import Path
 import pywren_ibm_cloud as pywren
 
 from pyimzml.ImzMLParser import ImzMLParser
@@ -9,8 +7,7 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra,\
-    clip_centroids_df_per_chunk, define_db_segments, segment_centroids
+from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, clip_centroids_df_per_chunk
 from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client, append_pywren_stats
 from annotation_pipeline.utils import logger
 
@@ -64,15 +61,12 @@ class Pipeline(object):
         self.centr_n = clip_centroids_df_per_chunk(self.config, self.config["storage"]["db_bucket"],
                                                    self.input_db["centroids_chunks"],
                                                    self.input_db["clipped_centroids_chunks"], mz_min, mz_max)
-
-        self.db_segm_lower_bounds = define_db_segments(self.config, self.config["storage"]["db_bucket"],
-                                                     self.input_db["clipped_centroids_chunks"], self.centr_n,
-                                                     self.ds_segm_n, self.ds_segm_size_mb)
-        self.centr_segm_n = len(self.db_segm_lower_bounds)
-
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
-        segment_centroids(self.config, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"],
-                          self.input_db["centroids_segments"], self.db_segm_lower_bounds)
+        self.centr_segm_n = segment_centroids(self.config, self.config["storage"]["db_bucket"],
+                                              self.input_db["clipped_centroids_chunks"],
+                                              self.input_db["centroids_segments"], self.centr_n, self.ds_segm_n,
+                                              self.ds_segm_size_mb)
+        logger.info(f'Segmented database chunks into {self.centr_segm_n} segments')
 
     def annotate(self):
         logger.info('Annotating...')
