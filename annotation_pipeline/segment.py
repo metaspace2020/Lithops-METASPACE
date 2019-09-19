@@ -230,7 +230,7 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
     pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    def merge_centr_df_segments_per_chunk(segm_i, ibm_cos):
+    def merge_centr_df_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} clipped centroids chunks')
 
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{centr_segm_prefix}/chunk/{segm_i}/')
@@ -262,7 +262,7 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
                 pool.map(_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(merge_centr_df_segments_per_chunk, range(len(db_segm_lower_bounds)))
+    futures = pw.map(merge_centr_df_segments, range(len(db_segm_lower_bounds)))
     pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
