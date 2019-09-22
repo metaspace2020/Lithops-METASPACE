@@ -53,8 +53,9 @@ class Pipeline(object):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
         self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb, sample_ratio=0.05)
         self.ds_segm_n = len(self.ds_segments_bounds)
-        segment_spectra(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"],
-                        self.input_data["ds_segments"], self.ds_segments_bounds)
+        self.ds_segm_keys = segment_spectra(self.config, self.config["storage"]["ds_bucket"],
+                                            self.input_data["ds_chunks"], self.input_data["ds_segments"],
+                                            self.ds_segments_bounds)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
@@ -69,9 +70,10 @@ class Pipeline(object):
         logger.info('Annotating...')
         clean_from_cos(self.config, self.config["storage"]["output_bucket"], self.output["formula_images"])
 
-        process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"], self.input_data["ds_segments"],
+        process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"], self.output["formula_images"],
-                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config)
+                                                       self.ds_segments_bounds, self.ds_segm_keys, self.coordinates,
+                                                       self.image_gen_config)
 
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
         futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
