@@ -91,7 +91,7 @@ def create_process_segment(ds_bucket, output_bucket, formula_images_prefix, ds_s
     ppm = image_gen_config['ppm']
 
     def process_centr_segment(bucket, key, data_stream, ibm_cos):
-        segm_i = int(key.split("/")[-1].split(".msgpack")[0])
+        segm_i = f'{key.split("/")[-2]}/{key.split("/")[-1].split(".msgpack")[0]}'
         print(f'Reading centroids segment {segm_i} from {key}')
         centr_df = pd.read_msgpack(data_stream._raw_stream)
 
