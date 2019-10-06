@@ -88,7 +88,6 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     segm_arr_columns = 3
     segm_n = segm_arr_columns * (total_n_mz * float_prec) // (ds_segm_size_mb * 2**20)
     segm_n = max(1, int(segm_n))
-    segm_n = min(segm_n, 1000)
 
     segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n + 1)]
     segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
@@ -106,7 +105,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
     ds_segments_bounds[-1, 1] = MAX_MZ_VALUE
 
     # define first level segmentation and then segment each one into desired number
-    first_level_segm_n = 32
+    first_level_segm_n = min(32, len(ds_segments_bounds))
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
 
     def segment_spectra_chunk(bucket, key, data_stream, ibm_cos):
@@ -126,7 +125,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}')
     pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
@@ -161,7 +160,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
 
             return keys
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=1024)
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)))
     keys_lists = pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
@@ -226,7 +225,7 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
     centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
 
     # define first level segmentation and then segment each one into desired number
-    first_level_centr_segm_n = 32
+    first_level_centr_segm_n = min(32, len(centr_segm_lower_bounds))
     centr_segm_lower_bounds = np.array_split(centr_segm_lower_bounds, first_level_centr_segm_n)
     first_level_centr_segm_bounds = np.array([bounds[0] for bounds in centr_segm_lower_bounds])
 
