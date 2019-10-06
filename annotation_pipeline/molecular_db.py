@@ -29,14 +29,14 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
         else:
             return []
 
-    def calculate_peaks_for_chunk(bucket, key, data_stream, ibm_cos):
-        chunk_df = pd.read_msgpack(data_stream._raw_stream)
+    def calculate_peaks_for_chunk(obj, ibm_cos):
+        chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
 
-        chunk_i = key.split(formulas_chunks_prefix + '/')[-1].split('.')[0]
+        chunk_i = obj.key.split(formulas_chunks_prefix + '/')[-1].split('.')[0]
         centroids_chunk_key = f'{centroids_chunks_prefix}/{chunk_i}.msgpack'
         ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
 
@@ -54,7 +54,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
     })
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = f'{bucket}/{formulas_chunks_prefix}'
+    iterdata = f'{bucket}/{formulas_chunks_prefix}/'
     futures = pw.map(calculate_peaks_for_chunk, iterdata)
     centroids_chunks_n = pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])

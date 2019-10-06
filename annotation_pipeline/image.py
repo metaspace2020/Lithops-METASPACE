@@ -90,10 +90,10 @@ def create_process_segment(ds_bucket, output_bucket, formula_images_prefix, ds_s
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
-    def process_centr_segment(bucket, key, data_stream, ibm_cos):
-        segm_i = f'{key.split("/")[-2]}/{key.split("/")[-1].split(".msgpack")[0]}'
-        print(f'Reading centroids segment {segm_i} from {key}')
-        centr_df = pd.read_msgpack(data_stream._raw_stream)
+    def process_centr_segment(obj, ibm_cos):
+        segm_i = f'{obj.key.split("/")[-2]}/{obj.key.split("/")[-1].split(".msgpack")[0]}'
+        print(f'Reading centroids segment {segm_i} from {obj.key}')
+        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
 
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')

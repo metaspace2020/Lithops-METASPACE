@@ -84,7 +84,7 @@ class Pipeline(object):
                                                        self.image_gen_config)
 
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
-        futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
+        futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/')
         formula_metrics_list = pw.get_result(futures)
         append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
