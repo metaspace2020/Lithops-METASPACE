@@ -19,7 +19,7 @@ setup(name='pywren-annotation-pipeline',
           "cpyImagingMSpec==0.3.2",
           "pyMSpec==0.1.2",
           "cpyMSpec==0.4.2",
-          "pyimzML==1.2.5",
+          "pyimzML==1.3.0",
           "requests",
           "msgpack-numpy",
           "metaspace2020", # Only needed for experiment notebooks
