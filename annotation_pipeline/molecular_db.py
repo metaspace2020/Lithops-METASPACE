@@ -9,7 +9,7 @@ import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import get_ibm_cos_client, append_pywren_stats, clean_from_cos
+from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -30,12 +30,14 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
             return []
 
     def calculate_peaks_chunk(obj, id, ibm_cos):
+        print(f'Calculating peaks from formulas chunk {obj.key}')
         chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
 
+        print(f'Storing centroids chunk {id}')
         centroids_chunk_key = f'{centroids_chunks_prefix}/{id}.msgpack'
         ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
 
@@ -60,6 +62,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
 
     num_centroids = sum(centroids_chunks_n)
     n_centroids_chunks = len(centroids_chunks_n)
+    logger.info(f'Calculated {num_centroids} centroids in {n_centroids_chunks} chunks')
     return num_centroids, n_centroids_chunks
 
 
@@ -80,6 +83,7 @@ def build_database(config, input_db):
         return int(m.hexdigest(), 16) % N_HASH_SEGMENTS
 
     def generate_formulas(adduct, ibm_cos):
+        print(f'Generating formulas for adduct {adduct}')
 
         def _get_mols(mols_key):
             return pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=mols_key)['Body'].read())
@@ -121,6 +125,7 @@ def build_database(config, input_db):
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
+        print(f'Deduplicating formulas segment {segm_i}')
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
         keys = [obj['Key'] for obj in objs['Contents']]
 
@@ -157,6 +162,7 @@ def build_database(config, input_db):
 
         def _store(segm_j):
             id = segm_i * n_threads + segm_j
+            print(f'Storing formulas segment {id}')
             ibm_cos.put_object(Bucket=bucket,
                                Key=f'{formulas_chunks_prefix}/{id}.msgpack',
                                Body=segm_list[segm_j].to_msgpack())
@@ -173,6 +179,7 @@ def build_database(config, input_db):
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
+    logger.info(f'Generated {num_formulas} formulas in {n_formulas_chunks} chunks')
     return num_formulas, n_formulas_chunks
 
 

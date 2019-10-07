@@ -93,7 +93,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
     ds_segments = np.array(list(zip(segm_lower_bounds[:-1], segm_lower_bounds[1:])))
 
-    logger.info(f'Generated {len(ds_segments)} dataset segments: {ds_segments[0]}...{ds_segments[-1]}')
+    logger.info(f'Generated {len(ds_segments)} dataset bounds: {ds_segments[0]}...{ds_segments[-1]}')
     return ds_segments
 
 
@@ -153,6 +153,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
                 sub_segm = segm[segm_start:segm_end]
                 base_id = sum([len(bounds) for bounds in ds_segments_bounds[:segm_i]])
                 id = base_id + segm_j
+                print(f'Storing dataset segment {id}')
                 ibm_cos.put_object(Bucket=bucket,
                                    Key=f'{ds_segments_prefix}/{id}.msgpack',
                                    Body=msgpack.dumps(sub_segm))
@@ -274,6 +275,7 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
                 segm_j, df = args
                 base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:segm_i]])
                 id = base_id + segm_j
+                print(f'Storing centroids segment {id}')
                 ibm_cos.put_object(Bucket=bucket,
                                    Key=f'{centr_segm_prefix}/{id}.msgpack',
                                    Body=df.to_msgpack())

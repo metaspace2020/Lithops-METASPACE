@@ -44,14 +44,12 @@ def generate_centroids(args, config):
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
     dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
 
-    num_formulas, n_formulas_chunks = build_database(config, input_db)
-    logger.info(f'Number of formulas: {num_formulas}')
+    build_database(config, input_db)
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
     polarity = input_data['polarity']
     # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
     isocalc_sigma = input_data['isocalc_sigma']
-    num_centroids, n_centroids_chunks = calculate_centroids(config, input_db, polarity, isocalc_sigma)
-    logger.info(f'Number of centroids generated: {num_centroids}')
+    calculate_centroids(config, input_db, polarity, isocalc_sigma)
 
 
 def convert_imzml(args, config):
