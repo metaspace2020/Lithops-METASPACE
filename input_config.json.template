@@ -10,8 +10,9 @@
     "metaspace_id": "****"
   },
   "molecular_db": {
-    "formulas_chunks": "metabolomics/db/formulas",
-    "centroids_pandas": "metabolomics/db/centroids.pickle",
+    "formulas_chunks": "metabolomics/db/formulas_chunks",
+    "centroids_chunks": "metabolomics/db/centroids_chunks",
+    "clipped_centroids_chunks": "metabolomics/tmp/clipped_centroids_chunks",
     "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
