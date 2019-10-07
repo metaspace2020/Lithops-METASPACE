@@ -29,15 +29,14 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
         else:
             return []
 
-    def calculate_peaks_chunk(obj, ibm_cos):
+    def calculate_peaks_chunk(obj, id, ibm_cos):
         chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
 
-        chunk_i = obj.key.split(formulas_chunks_prefix + '/')[-1].split('.')[0]
-        centroids_chunk_key = f'{centroids_chunks_prefix}/{chunk_i}.msgpack'
+        centroids_chunk_key = f'{centroids_chunks_prefix}/{id}.msgpack'
         ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
 
         return peaks_df.shape[0]
@@ -157,8 +156,9 @@ def build_database(config, input_db):
         segm_list = [segm[i:i+subsegm_size] for i in range(0, segm.shape[0], subsegm_size)]
 
         def _store(segm_j):
+            id = segm_i * n_threads + segm_j
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{formulas_chunks_prefix}/{segm_i}/{segm_j}.msgpack',
+                               Key=f'{formulas_chunks_prefix}/{id}.msgpack',
                                Body=segm_list[segm_j].to_msgpack())
 
         with ThreadPoolExecutor(max_workers=128) as pool:
