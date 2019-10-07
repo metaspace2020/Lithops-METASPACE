@@ -9,4 +9,3 @@ RUN pip install pyMSpec==0.1.2
 RUN pip install cpyMSpec==0.3.5
 RUN pip install pyimzML==1.2.5
 RUN pip install msgpack-numpy
-RUN pip install metaspace2020
