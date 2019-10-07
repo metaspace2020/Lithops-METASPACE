@@ -7,8 +7,8 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids,\
-    clip_centroids_df_per_chunk, define_centr_segments
+from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
+    clip_centr_df, define_centr_segments
 from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client, append_pywren_stats
 from annotation_pipeline.utils import logger
 
@@ -61,9 +61,9 @@ class Pipeline(object):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"])
-        self.centr_n = clip_centroids_df_per_chunk(self.config, self.config["storage"]["db_bucket"],
-                                                   self.input_db["centroids_chunks"],
-                                                   self.input_db["clipped_centroids_chunks"], mz_min, mz_max)
+        self.centr_n = clip_centr_df(self.config, self.config["storage"]["db_bucket"],
+                                     self.input_db["centroids_chunks"], self.input_db["clipped_centroids_chunks"],
+                                     mz_min, mz_max)
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
         self.centr_segm_lower_bounds = define_centr_segments(self.config, self.config["storage"]["db_bucket"],
