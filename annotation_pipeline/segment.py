@@ -170,7 +170,7 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
 def clip_centr_df(config, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_min, mz_max):
 
     def clip_centr_df_chunk(obj, id, ibm_cos):
-        print(f'Clip centroids dataframe chunk {obj.key}')
+        print(f'Clipping centroids dataframe chunk {obj.key}')
         centroids_df_chunk = pd.read_msgpack(obj.data_stream._raw_stream).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
 
@@ -196,7 +196,7 @@ def define_centr_segments(config, bucket, clip_centr_chunk_prefix, centr_n, ds_s
     logger.info('Defining centroids segments bounds')
 
     def get_first_peak_mz(obj):
-        print(f'Extract first peak mz values from clipped centroids dataframe {obj.key}')
+        print(f'Extracting first peak mz values from clipped centroids dataframe {obj.key}')
         centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
         first_peak_df = centr_df[centr_df.peak_i == 0]
         return first_peak_df.mz
