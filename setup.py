@@ -11,7 +11,7 @@ setup(name='pywren-annotation-pipeline',
       url='https://github.com/metaspace2020/pywren-annotation-pipeline',
       packages=find_packages(),
       install_requires=[
-          "pywren-ibm-cloud>=1.0.20",
+          "pywren-ibm-cloud>=1.0.21",
           # pandas version should match the version in the runtime to ensure data generated locally can be unpickled
           # in pywren actions
           "pandas==0.25.1",
