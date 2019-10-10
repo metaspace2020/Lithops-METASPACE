@@ -7,8 +7,8 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids,\
-    clip_centroids_df_per_chunk, define_centr_segments
+from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
+    clip_centr_df, define_centr_segments
 from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, get_ibm_cos_client, append_pywren_stats
 from annotation_pipeline.utils import logger
 
@@ -52,18 +52,17 @@ class Pipeline(object):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
         self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb, sample_ratio=0.05)
         self.ds_segm_n = len(self.ds_segments_bounds)
-        self.ds_segm_keys = segment_spectra(self.config, self.config["storage"]["ds_bucket"],
-                                            self.input_data["ds_chunks"], self.input_data["ds_segments"],
-                                            self.ds_segments_bounds)
+        segment_spectra(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"],
+                        self.input_data["ds_segments"], self.ds_segments_bounds)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"])
-        self.centr_n = clip_centroids_df_per_chunk(self.config, self.config["storage"]["db_bucket"],
-                                                   self.input_db["centroids_chunks"],
-                                                   self.input_db["clipped_centroids_chunks"], mz_min, mz_max)
+        self.centr_n = clip_centr_df(self.config, self.config["storage"]["db_bucket"],
+                                     self.input_db["centroids_chunks"], self.input_db["clipped_centroids_chunks"],
+                                     mz_min, mz_max)
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
         self.centr_segm_lower_bounds = define_centr_segments(self.config, self.config["storage"]["db_bucket"],
@@ -79,12 +78,12 @@ class Pipeline(object):
         clean_from_cos(self.config, self.config["storage"]["output_bucket"], self.output["formula_images"])
 
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
-                                                       self.config["storage"]["output_bucket"], self.output["formula_images"],
-                                                       self.ds_segments_bounds, self.ds_segm_keys, self.coordinates,
-                                                       self.image_gen_config)
+                                                       self.config["storage"]["output_bucket"],
+                                                       self.input_data["ds_segments"], self.output["formula_images"],
+                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config)
 
         pw = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
-        futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}')
+        futures = pw.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/')
         formula_metrics_list = pw.get_result(futures)
         append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 

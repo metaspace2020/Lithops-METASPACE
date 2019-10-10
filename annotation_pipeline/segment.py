@@ -93,7 +93,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
     ds_segments = np.array(list(zip(segm_lower_bounds[:-1], segm_lower_bounds[1:])))
 
-    logger.info(f'Generated {len(ds_segments)} dataset segments: {ds_segments[0]}...{ds_segments[-1]}')
+    logger.info(f'Generated {len(ds_segments)} dataset bounds: {ds_segments[0]}...{ds_segments[-1]}')
     return ds_segments
 
 
@@ -108,10 +108,9 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
     first_level_segm_n = min(32, len(ds_segments_bounds))
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
 
-    def segment_spectra_chunk(bucket, key, data_stream, ibm_cos):
-        ch_i = int(key.split("/")[-1].split(".msgpack")[0])
-        print(f'Segmenting spectra chunk {ch_i}')
-        sp_mz_int_buf = msgpack.loads(data_stream.read())
+    def segment_spectra_chunk(obj, id, ibm_cos):
+        print(f'Segmenting spectra chunk {obj.key}')
+        sp_mz_int_buf = msgpack.loads(obj.data_stream.read())
 
         def _first_level_segment_upload(segm_i):
             l = ds_segments_bounds[segm_i][0, 0]
@@ -119,14 +118,14 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
             segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
             segm = sp_mz_int_buf[segm_start:segm_end]
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{ds_segments_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
+                               Key=f'{ds_segments_prefix}/chunk/{segm_i}/{id}.msgpack',
                                Body=msgpack.dumps(segm))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}')
+    futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/')
     pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
@@ -147,48 +146,45 @@ def segment_spectra(config, bucket, ds_chunks_prefix, ds_segments_prefix, ds_seg
 
             clean_from_cos(config, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
             bounds_list = ds_segments_bounds[segm_i]
-            keys = [f'{ds_segments_prefix}/{segm_i}/{sub_segm_i}.msgpack' for sub_segm_i in range(len(bounds_list))]
 
-            def _second_level_segment_upload(sub_segm_i):
-                l, r = bounds_list[sub_segm_i]
+            def _second_level_segment_upload(segm_j):
+                l, r = bounds_list[segm_j]
                 segm_start, segm_end = np.searchsorted(segm[:, 1], (l, r))  # mz expected to be in column 1
                 sub_segm = segm[segm_start:segm_end]
-                ibm_cos.put_object(Bucket=bucket, Key=keys[sub_segm_i], Body=msgpack.dumps(sub_segm))
+                base_id = sum([len(bounds) for bounds in ds_segments_bounds[:segm_i]])
+                id = base_id + segm_j
+                print(f'Storing dataset segment {id}')
+                ibm_cos.put_object(Bucket=bucket,
+                                   Key=f'{ds_segments_prefix}/{id}.msgpack',
+                                   Body=msgpack.dumps(sub_segm))
 
             with ThreadPoolExecutor(max_workers=128) as pool:
                 pool.map(_second_level_segment_upload, range(len(bounds_list)))
 
-            return keys
-
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)))
-    keys_lists = pw.get_result(futures)
+    pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
-    keys = []
-    for keys_list in keys_lists:
-        keys.extend(keys_list)
-    return keys
 
+def clip_centr_df(config, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_min, mz_max):
 
-def clip_centroids_df_per_chunk(config, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_min, mz_max):
-
-    def _clip(bucket, key, data_stream, ibm_cos):
-        chunk_i = key.split('/')[-2] + key.split('/')[-1].split('.')[0]
-        centroids_df_chunk = pd.read_msgpack(data_stream._raw_stream).sort_values('mz')
+    def clip_centr_df_chunk(obj, id, ibm_cos):
+        print(f'Clipping centroids dataframe chunk {obj.key}')
+        centroids_df_chunk = pd.read_msgpack(obj.data_stream._raw_stream).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
 
         ds_mz_range_unique_formulas = centroids_df_chunk[(mz_min < centroids_df_chunk.mz) &
                                                          (centroids_df_chunk.mz < mz_max)].index.unique()
         centr_df_chunk = centroids_df_chunk[centroids_df_chunk.index.isin(ds_mz_range_unique_formulas)].reset_index()
         ibm_cos.put_object(Bucket=bucket,
-                           Key=f'{clip_centr_chunk_prefix}/{chunk_i}.msgpack',
+                           Key=f'{clip_centr_chunk_prefix}/{id}.msgpack',
                            Body=centr_df_chunk.to_msgpack())
 
         return centr_df_chunk.shape[0]
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(_clip, f'{bucket}/{centr_chunks_prefix}/')
+    futures = pw.map(clip_centr_df_chunk, f'{bucket}/{centr_chunks_prefix}/')
     centr_n = sum(pw.get_result(futures))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
@@ -199,8 +195,9 @@ def clip_centroids_df_per_chunk(config, bucket, centr_chunks_prefix, clip_centr_
 def define_centr_segments(config, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_n, ds_segm_size_mb):
     logger.info('Defining centroids segments bounds')
 
-    def get_first_peak_mz(bucket, key, data_stream):
-        centr_df = pd.read_msgpack(data_stream._raw_stream)
+    def get_first_peak_mz(obj):
+        print(f'Extracting first peak mz values from clipped centroids dataframe {obj.key}')
+        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
         first_peak_df = centr_df[centr_df.peak_i == 0]
         return first_peak_df.mz
 
@@ -236,23 +233,22 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
         centr_segm_df = pd.merge(centr_df, first_peak_df[['formula_i', 'segm_i']], on='formula_i').sort_values('mz')
         return centr_segm_df
 
-    def segment_centr_chunk(bucket, key, data_stream, ibm_cos):
-        ch_i = int(key.split("/")[-1].split(".msgpack")[0])
-        print(f'Segmenting clipped centroids chunk {ch_i}')
-        centr_df = pd.read_msgpack(data_stream._raw_stream)
+    def segment_centr_chunk(obj, id, ibm_cos):
+        print(f'Segmenting clipped centroids dataframe chunk {obj.key}')
+        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
         centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
 
         def _first_level_upload(args):
             segm_i, df = args
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{centr_segm_prefix}/chunk/{segm_i}/{ch_i}.msgpack',
+                               Key=f'{centr_segm_prefix}/chunk/{segm_i}/{id}.msgpack',
                                Body=df.to_msgpack())
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(segment_centr_chunk, f'{bucket}/{clip_centr_chunk_prefix}')
+    futures = pw.map(segment_centr_chunk, f'{bucket}/{clip_centr_chunk_prefix}/')
     pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
@@ -276,9 +272,12 @@ def segment_centroids(config, bucket, clip_centr_chunk_prefix, centr_segm_prefix
             centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[segm_i])
 
             def _second_level_upload(args):
-                sub_segm_i, df = args
+                segm_j, df = args
+                base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:segm_i]])
+                id = base_id + segm_j
+                print(f'Storing centroids segment {id}')
                 ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{centr_segm_prefix}/{segm_i}/{sub_segm_i}.msgpack',
+                                   Key=f'{centr_segm_prefix}/{id}.msgpack',
                                    Body=df.to_msgpack())
 
             with ThreadPoolExecutor(max_workers=128) as pool:

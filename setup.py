@@ -11,17 +11,18 @@ setup(name='pywren-annotation-pipeline',
       url='https://github.com/metaspace2020/pywren-annotation-pipeline',
       packages=find_packages(),
       install_requires=[
-          "pywren-ibm-cloud>=1.0.8",
+          "pywren-ibm-cloud>=1.1.0",
           # pandas version should match the version in the runtime to ensure data generated locally can be unpickled
           # in pywren actions
-          "pandas==0.24.1",
+          "pandas==0.25.1",
+          "scipy==1.3.1",
           "pyImagingMSpec==0.1.4",
           "cpyImagingMSpec==0.3.2",
           "pyMSpec==0.1.2",
           "cpyMSpec==0.4.2",
-          "pyimzML==1.2.5",
+          "pyimzML==1.3.0",
           "requests",
-          "msgpack-numpy",
+          "msgpack-numpy==0.4.4.3",
           "metaspace2020", # Only needed for experiment notebooks
           "psutil", # Only needed for experiment notebooks
       ])

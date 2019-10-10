@@ -87,13 +87,12 @@ def append_pywren_stats(futures, runtime_memory, filename='stats.csv'):
         csvfile.write(f'{func_name},{actions_num},{runtime_memory},{average_runtime}\n')
 
 
-def display_pywren_stats(filename='stats.csv'):
+def get_pywren_stats(filename='stats.csv'):
     stats = pd.read_csv(filename)
-    print(stats, '\n')
-
     unit_price_in_dollars = 0.000017
     calc_func = lambda row: row[1] * (row[2]/1024) * row[3] * unit_price_in_dollars
     print('Total PyWren cost:', np.sum(np.apply_along_axis(calc_func, 1, stats)), '$')
+    return stats
 
 
 def remove_pywren_stats(filename='stats.csv'):

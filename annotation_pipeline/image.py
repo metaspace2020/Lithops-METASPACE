@@ -38,7 +38,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
             yield centr_f_inds[i], centr_p_inds[i], centr_ints[i], m
 
 
-def read_ds_segments(ds_bucket, ds_segm_keys, first_segm_i, last_segm_i, ibm_cos):
+def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
 
     def read_ds_segment(ds_segm_key):
         data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
@@ -50,7 +50,7 @@ def read_ds_segments(ds_bucket, ds_segm_keys, first_segm_i, last_segm_i, ibm_cos
         return sp_arr
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        ds_segm_keys = [ds_segm_keys[segm_i] for segm_i in range(first_segm_i, last_segm_i + 1)]
+        ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
         sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
 
     sp_arr = [a for a in sp_arr if a.shape[0] > 0]
@@ -83,22 +83,20 @@ def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
     return first_ds_segm_i, last_ds_segm_i
 
 
-def create_process_segment(ds_bucket, output_bucket, formula_images_prefix, ds_segments_bounds,
-                           ds_segm_keys, coordinates, image_gen_config):
+def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_images_prefix, ds_segments_bounds,
+                           coordinates, image_gen_config):
     sample_area_mask = make_sample_area_mask(coordinates)
     nrows, ncols = ds_dims(coordinates)
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
-    def process_centr_segment(bucket, key, data_stream, ibm_cos):
-        segm_i = f'{key.split("/")[-2]}/{key.split("/")[-1].split(".msgpack")[0]}'
-        print(f'Reading centroids segment {segm_i} from {key}')
-        centr_df = pd.read_msgpack(data_stream._raw_stream)
+    def process_centr_segment(obj, id, ibm_cos):
+        print(f'Reading centroids segment {obj.key}')
+        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
 
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
-        # (ds_bucket, ds_segments_prefix, first_segm_i, last_segm_i, ibm_cos):
-        sp_arr = read_ds_segments(ds_bucket, ds_segm_keys, first_ds_segm_i, last_ds_segm_i, ibm_cos)
+        sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i, ibm_cos)
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
                                            centr_df=centr_df,
@@ -107,10 +105,10 @@ def create_process_segment(ds_bucket, output_bucket, formula_images_prefix, ds_s
 
         print(f'Saving {len(formula_images)} images')
         ibm_cos.put_object(Bucket=output_bucket,
-                           Key=f'{formula_images_prefix}/{segm_i}.pickle',
+                           Key=f'{formula_images_prefix}/{id}.pickle',
                            Body=pickle.dumps(formula_images))
 
-        print(f'Segment {segm_i} finished')
+        print(f'Centroids segment {obj.key} finished')
 
         return formula_metrics_df
 

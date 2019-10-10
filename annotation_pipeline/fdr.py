@@ -18,6 +18,13 @@ def _get_random_adduct_set(size, adducts, offset):
 def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
 
     def build_ranking(job_i, group_i, ranking_i, database, modifier, adduct, ibm_cos):
+        print("Building ranking...")
+        print(f'job_i: {job_i}')
+        print(f'group_i: {group_i}')
+        print(f'ranking_i: {ranking_i}')
+        print(f'database: {database}')
+        print(f'modifier: {modifier}')
+        print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
         formula_to_id = get_formula_id_dfs(ibm_cos, config["storage"]["db_bucket"], input_db["formulas_chunks"])[0]
@@ -89,6 +96,8 @@ def calculate_fdrs(config, input_data, rankings_df):
         return target_fdrs
 
     def merge_rankings(ibm_cos, data_bucket, target_row, decoy_keys):
+        print("Merging rankings...")
+        print(target_row)
         rankings = [run_ranking(ibm_cos, data_bucket, target_row.key, decoy_key) for decoy_key in decoy_keys]
         mols = (pd.concat(rankings)
                 .rename_axis('formula_i')
