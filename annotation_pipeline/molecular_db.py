@@ -156,6 +156,10 @@ def build_database(config, input_db):
                             columns=['formula'],
                             index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
 
+        ibm_cos.put_object(Bucket=bucket,
+                           Key=f'{formulas_chunks_prefix}_fdr/{segm_i}.msgpack',
+                           Body=segm.to_msgpack())
+
         n_threads = N_FORMULAS_SEGMENTS // N_HASH_SEGMENTS
         subsegm_size = math.ceil(len(segm) / n_threads)
         segm_list = [segm[i:i+subsegm_size] for i in range(0, segm.shape[0], subsegm_size)]
@@ -183,22 +187,19 @@ def build_database(config, input_db):
     return num_formulas, n_formulas_chunks
 
 
-def get_formula_id_dfs(ibm_cos, bucket, formulas_chunks_prefix):
-    def get_formula_chunk(formula_chunk_key):
-        data_stream = ibm_cos.get_object(Bucket=bucket, Key=formula_chunk_key)['Body']
-        formula_chunk = pd.read_msgpack(data_stream._raw_stream)
-        return formula_chunk
-
+def get_formula_to_id_df_for_specific_formulas(ibm_cos, bucket, formulas_chunks_prefix, formulas):
+    formula_to_id = {}
     objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/')
     keys = [obj['Key'] for obj in objs['Contents']]
-    with ThreadPoolExecutor(max_workers=128) as pool:
-        results = list(pool.map(get_formula_chunk, keys))
+    for key in keys:
+        data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
+        formula_chunk = pd.read_msgpack(data_stream._raw_stream)
+        formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
+        for formula in formulas:
+            if formula_to_id_chunk.get(formula) is not None:
+                formula_to_id[formula] = formula_to_id_chunk.get(formula)
 
-    formulas = pd.concat(results)
-    formula_to_id = dict(zip(formulas.formula, formulas.index))
-    id_to_formula = formulas.formula.to_dict()
-
-    return formula_to_id, id_to_formula
+    return formula_to_id
 
 
 def dump_mol_db(config, bucket, key, db_id, force=False):

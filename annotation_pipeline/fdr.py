@@ -5,7 +5,7 @@ import pandas as pd
 import pywren_ibm_cloud as pywren
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.molecular_db import DECOY_ADDUCTS, get_formula_id_dfs
+from annotation_pipeline.molecular_db import DECOY_ADDUCTS, get_formula_to_id_df_for_specific_formulas
 from annotation_pipeline.utils import append_pywren_stats
 
 
@@ -27,7 +27,6 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        formula_to_id = get_formula_id_dfs(ibm_cos, config["storage"]["db_bucket"], input_db["formulas_chunks"])[0]
         mols = pickle.loads(ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=database)['Body'].read())
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
@@ -38,6 +37,8 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             adducts = _get_random_adduct_set(len(mols), decoy_adducts, ranking_i)
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
+        formula_to_id = get_formula_to_id_df_for_specific_formulas(ibm_cos, config["storage"]["db_bucket"],
+                                                                   input_db["formulas_chunks"], mol_formulas)
         formula_is = [formula and formula_to_id.get(formula) for formula in mol_formulas]
         msm = [formula_i and msm_lookup.get(formula_i) for formula_i in formula_is]
         if adduct is not None:
