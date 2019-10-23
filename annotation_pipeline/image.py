@@ -2,7 +2,6 @@ import pickle
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
-from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
 from annotation_pipeline.utils import ds_dims, get_pixel_indices
@@ -40,18 +39,18 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
 
-    def read_ds_segment(ds_segm_key):
-        data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
-        data = msgpack.loads(data_stream.read())
-        if type(data) == list:
-            sp_arr = np.concatenate(data)
-        else:
-            sp_arr = data
-        return sp_arr
+    def read_ds_segment(ds_segm_keys):
+        for ds_segm_key in ds_segm_keys:
+            data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
+            data = msgpack.loads(data_stream.read())
+            if type(data) == list:
+                sp_arr = np.concatenate(data)
+            else:
+                sp_arr = data
+            yield sp_arr
 
-    with ThreadPoolExecutor(max_workers=128) as pool:
-        ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
-        sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
+    ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
+    sp_arr = list(read_ds_segment(ds_segm_keys))
 
     sp_arr = [a for a in sp_arr if a.shape[0] > 0]
     if len(sp_arr) > 0:

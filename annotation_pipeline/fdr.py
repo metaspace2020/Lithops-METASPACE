@@ -2,10 +2,11 @@ from itertools import product, repeat
 import pickle
 import numpy as np
 import pandas as pd
+import msgpack_numpy as msgpack
 import pywren_ibm_cloud as pywren
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.molecular_db import DECOY_ADDUCTS, get_formula_to_id_df_for_specific_formulas
+from annotation_pipeline.molecular_db import DECOY_ADDUCTS
 from annotation_pipeline.utils import append_pywren_stats
 
 
@@ -17,10 +18,9 @@ def _get_random_adduct_set(size, adducts, offset):
 
 def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
 
-    def build_ranking(job_i, group_i, ranking_i, database, modifier, adduct, ibm_cos):
+    def build_ranking(group_i, ranking_i, database, modifier, adduct, id, ibm_cos):
         print("Building ranking...")
-        print(f'job_i: {job_i}')
-        print(f'group_i: {group_i}')
+        print(f'job_i: {id}')
         print(f'ranking_i: {ranking_i}')
         print(f'database: {database}')
         print(f'modifier: {modifier}')
@@ -37,8 +37,17 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             adducts = _get_random_adduct_set(len(mols), decoy_adducts, ranking_i)
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
-        formula_to_id = get_formula_to_id_df_for_specific_formulas(ibm_cos, config["storage"]["db_bucket"],
-                                                                   input_db["formulas_chunks"], mol_formulas)
+        formula_to_id = {}
+        objs = ibm_cos.list_objects_v2(Bucket=config["storage"]["db_bucket"],
+                                       Prefix=f'{input_db["formula_to_id_chunks"]}/')
+        keys = [obj['Key'] for obj in objs['Contents']]
+        for key in keys:
+            data_stream = ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=key)['Body']
+            formula_to_id_chunk = msgpack.loads(data_stream.read(), encoding='utf-8')
+            for formula in mol_formulas:
+                if formula_to_id_chunk.get(formula) is not None:
+                    formula_to_id[formula] = formula_to_id_chunk.get(formula)
+
         formula_is = [formula and formula_to_id.get(formula) for formula in mol_formulas]
         msm = [formula_i and msm_lookup.get(formula_i) for formula_i in formula_is]
         if adduct is not None:
@@ -52,7 +61,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             key = f'{input_data["fdr_rankings"]}/{group_i}/decoy{ranking_i}.pickle'
 
         ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"], Key=key, Body=pickle.dumps(ranking_df))
-        return job_i, key
+        return id, key
 
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
     n_decoy_rankings = input_data.get('num_decoys', len(decoy_adducts))
@@ -68,7 +77,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
                              for ranking_i in range(n_decoy_rankings))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(build_ranking, [(job_i, *job) for job_i, job in enumerate(ranking_jobs)])
+    futures = pw.map(build_ranking, ranking_jobs)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 

@@ -3,10 +3,12 @@ from itertools import repeat
 from ibm_botocore.client import ClientError
 from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
+import msgpack_numpy as msgpack
 import pandas as pd
 import pickle
 import hashlib
 import math
+
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos
@@ -14,56 +16,6 @@ from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
-
-
-def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
-    bucket = config["storage"]["db_bucket"]
-    formulas_chunks_prefix = input_db["formulas_chunks"]
-    centroids_chunks_prefix = input_db["centroids_chunks"]
-    clean_from_cos(config, bucket, centroids_chunks_prefix)
-
-    def calculate_peaks_for_formula(formula_i, formula):
-        mzs, ints = isocalc_wrapper.centroids(formula)
-        if mzs is not None:
-            return list(zip(repeat(formula_i), range(len(mzs)), mzs, ints))
-        else:
-            return []
-
-    def calculate_peaks_chunk(obj, id, ibm_cos):
-        print(f'Calculating peaks from formulas chunk {obj.key}')
-        chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
-        peaks = [peak for formula_i, formula in chunk_df.formula.items()
-                 for peak in calculate_peaks_for_formula(formula_i, formula)]
-        peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
-        peaks_df.set_index('formula_i', inplace=True)
-
-        print(f'Storing centroids chunk {id}')
-        centroids_chunk_key = f'{centroids_chunks_prefix}/{id}.msgpack'
-        ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
-
-        return peaks_df.shape[0]
-
-    from annotation_pipeline.isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
-    isocalc_wrapper = IsocalcWrapper({
-        # These instrument settings are usually customized on a per-dataset basis out of a set of
-        # 18 possible combinations, but most of EMBL's datasets are compatible with the following settings:
-        'charge': {
-            'polarity': polarity,
-            'n_charges': 1,
-        },
-        'isocalc_sigma': float(f"{isocalc_sigma:f}") # Rounding to match production implementation
-    })
-
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = f'{bucket}/{formulas_chunks_prefix}/'
-    futures = pw.map(calculate_peaks_chunk, iterdata)
-    centroids_chunks_n = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
-
-    num_centroids = sum(centroids_chunks_n)
-    n_centroids_chunks = len(centroids_chunks_n)
-    logger.info(f'Calculated {num_centroids} centroids in {n_centroids_chunks} chunks')
-    return num_centroids, n_centroids_chunks
 
 
 def build_database(config, input_db):
@@ -184,22 +136,91 @@ def build_database(config, input_db):
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
     logger.info(f'Generated {num_formulas} formulas in {n_formulas_chunks} chunks')
+
+    formula_to_id_chunks_prefix = input_db["formula_to_id_chunks"]
+    clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
+    N_FORMULA_TO_ID = 16
+
+    def store_formula_to_id_chunks(ch_i, ibm_cos):
+        print(f'Storing formula_to_id dictionary chunk {ch_i}')
+        start_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * ch_i
+        end_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * (ch_i + 1)
+        keys = [f'{formulas_chunks_prefix}/{formulas_chunk}.msgpack' for formulas_chunk in range(start_id, end_id)]
+
+        def _get(key):
+            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
+            formula_chunk = pd.read_msgpack(data_stream._raw_stream)
+            formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
+            return formula_to_id_chunk
+
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            results = list(pool.map(_get, keys))
+
+        formula_to_id = {}
+        for chunk_dict in results:
+            formula_to_id.update(chunk_dict)
+
+        ibm_cos.put_object(Bucket=bucket,
+                           Key=f'{formula_to_id_chunks_prefix}/{ch_i}.msgpack',
+                           Body=msgpack.dumps(formula_to_id))
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    futures = pw.map(store_formula_to_id_chunks, range(N_FORMULA_TO_ID))
+    results = pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    logger.info(f'Built {len(results)} formula_to_id dictionaries chunks')
+
     return num_formulas, n_formulas_chunks
 
 
-def get_formula_to_id_df_for_specific_formulas(ibm_cos, bucket, formulas_chunks_prefix, formulas):
-    formula_to_id = {}
-    objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/')
-    keys = [obj['Key'] for obj in objs['Contents']]
-    for key in keys:
-        data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
-        formula_chunk = pd.read_msgpack(data_stream._raw_stream)
-        formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
-        for formula in formulas:
-            if formula_to_id_chunk.get(formula) is not None:
-                formula_to_id[formula] = formula_to_id_chunk.get(formula)
+def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
+    bucket = config["storage"]["db_bucket"]
+    formulas_chunks_prefix = input_db["formulas_chunks"]
+    centroids_chunks_prefix = input_db["centroids_chunks"]
+    clean_from_cos(config, bucket, centroids_chunks_prefix)
 
-    return formula_to_id
+    def calculate_peaks_for_formula(formula_i, formula):
+        mzs, ints = isocalc_wrapper.centroids(formula)
+        if mzs is not None:
+            return list(zip(repeat(formula_i), range(len(mzs)), mzs, ints))
+        else:
+            return []
+
+    def calculate_peaks_chunk(obj, id, ibm_cos):
+        print(f'Calculating peaks from formulas chunk {obj.key}')
+        chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
+        peaks = [peak for formula_i, formula in chunk_df.formula.items()
+                 for peak in calculate_peaks_for_formula(formula_i, formula)]
+        peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
+        peaks_df.set_index('formula_i', inplace=True)
+
+        print(f'Storing centroids chunk {id}')
+        centroids_chunk_key = f'{centroids_chunks_prefix}/{id}.msgpack'
+        ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
+
+        return peaks_df.shape[0]
+
+    from annotation_pipeline.isocalc_wrapper import IsocalcWrapper # Import lazily so that the rest of the pipeline still works if the dependency is missing
+    isocalc_wrapper = IsocalcWrapper({
+        # These instrument settings are usually customized on a per-dataset basis out of a set of
+        # 18 possible combinations, but most of EMBL's datasets are compatible with the following settings:
+        'charge': {
+            'polarity': polarity,
+            'n_charges': 1,
+        },
+        'isocalc_sigma': float(f"{isocalc_sigma:f}") # Rounding to match production implementation
+    })
+
+    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
+    iterdata = f'{bucket}/{formulas_chunks_prefix}/'
+    futures = pw.map(calculate_peaks_chunk, iterdata)
+    centroids_chunks_n = pw.get_result(futures)
+    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+
+    num_centroids = sum(centroids_chunks_n)
+    n_centroids_chunks = len(centroids_chunks_n)
+    logger.info(f'Calculated {num_centroids} centroids in {n_centroids_chunks} chunks')
+    return num_centroids, n_centroids_chunks
 
 
 def dump_mol_db(config, bucket, key, db_id, force=False):

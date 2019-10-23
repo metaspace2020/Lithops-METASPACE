@@ -32,7 +32,7 @@ class Pipeline(object):
 
     def __call__(self, *args, **kwargs):
         self.load_ds()
-        #self.split_ds()
+        self.split_ds()
         self.segment_ds()
         self.segment_centroids()
         self.annotate()
