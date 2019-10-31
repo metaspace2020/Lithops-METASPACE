@@ -9,10 +9,8 @@ import pickle
 import hashlib
 import math
 
-
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos
-
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
@@ -139,9 +137,9 @@ def build_database(config, input_db):
 
     formula_to_id_chunks_prefix = input_db["formula_to_id_chunks"]
     clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
-    N_FORMULA_TO_ID = 16
+    N_FORMULA_TO_ID = 8
 
-    def store_formula_to_id_chunks(ch_i, ibm_cos):
+    def store_formula_to_id_chunk(ch_i, ibm_cos):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
         start_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * ch_i
         end_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * (ch_i + 1)
@@ -165,7 +163,7 @@ def build_database(config, input_db):
                            Body=msgpack.dumps(formula_to_id))
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(store_formula_to_id_chunks, range(N_FORMULA_TO_ID))
+    futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID))
     results = pw.get_result(futures)
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
     logger.info(f'Built {len(results)} formula_to_id dictionaries chunks')
