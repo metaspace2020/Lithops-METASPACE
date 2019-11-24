@@ -22,7 +22,7 @@ class Pipeline(object):
         self.input_db = input_config['molecular_db']
         self.output = input_config['output']
 
-        self.ds_segm_size_mb = 5
+        self.ds_segm_size_mb = 100
         self.image_gen_config = {
             "q": 99,
             "do_preprocessing": False,
