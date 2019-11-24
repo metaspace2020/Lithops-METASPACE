@@ -1,6 +1,7 @@
 import pickle
 import numpy as np
 import pandas as pd
+from io import BytesIO
 from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
@@ -102,14 +103,20 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
                                            centr_df=centr_df,
                                            nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
         formula_metrics_df, formula_images = formula_image_metrics(formula_images_it, compute_metrics)
+        n_images = len(formula_images)
 
-        print(f'Saving {len(formula_images)} images')
-        ibm_cos.put_object(Bucket=output_bucket,
-                           Key=f'{formula_images_prefix}/{id}.pickle',
-                           Body=pickle.dumps(formula_images))
+        if n_images > 0:
+            print(f'Saving {n_images} images')
+            with BytesIO() as compressed_images:
+                np.savez_compressed(compressed_images, formula_images)
+                compressed_images.seek(0)
+                ibm_cos.put_object(Bucket=output_bucket,
+                                   Key=f'{formula_images_prefix}/{id}.npz',
+                                   Body=compressed_images)
+        else:
+            print(f'No images to save')
 
         print(f'Centroids segment {obj.key} finished')
-
         return formula_metrics_df
 
     return process_centr_segment
