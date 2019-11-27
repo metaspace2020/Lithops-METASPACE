@@ -1,5 +1,5 @@
-# Metaspace annotation pipeline on IBM Cloud
-Experimental code to integrate Metaspace [engine](https://github.com/metaspace2020/metaspace/tree/master/metaspace/engine)
+# METASPACE annotation pipeline on IBM Cloud
+Experimental code to integrate [METASPACE engine](https://github.com/metaspace2020/metaspace/tree/master/metaspace/engine)
 with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
 
 # Instructions for use
@@ -60,6 +60,20 @@ There are also 3 notebooks prepared for benchmarking that can be run with Jupyte
 
 These datasets can be used by extracting them into the `metabolomics/ds` directory and changing an experiment notebook to use the respective `input_config***.json` file.
     
+### Example databases
+
+These molecular databases can be selected in the `input_config.json` files. They are automatically converted to 
+pickle format and uploaded to IBM cloud in the notebooks. 
+
+| Database            | Filename            | Description                    |
+| :-----------------: | :-----------------: | :----------------------------- |
+| [HMDB](http://www.hmdb.ca/) | `mol_db1.pickle` | Human Metabolome Database |
+| [ChEBI](https://www.ebi.ac.uk/chebi/) | `mol_db2.pickle` | Chemical Entities of Biological Interest |
+| [LIPID MAPS](https://www.lipidmaps.org/) | `mol_db3.pickle` |  |
+| [SwissLipids](https://www.swisslipids.org/) | `mol_db4.pickle` |  |
+| Small database | `mol_db5.pickle` | This database is used in Experiment 2 as an example of a small set of user-supplied molecules for running small, interactive annotation jobs. |
+| Peptide databases | `mol_db7.pickle` <br/> ... <br/> `mol_db12.pickle` | A collection of databases of predicted peptides for Bos Taurus, Sus Scrofa and Homo Sapiens samples. These databases were contributed by [Benjamin Baluff (M4I, Maastricht University)](https://www.maastrichtuniversity.nl/b.balluff) exclusively for use with METASPACE. |  
+
 # Acknowledgements
 
 ![image](https://user-images.githubusercontent.com/26366936/61350554-d62acf00-a85f-11e9-84b2-36312a35398e.png)
