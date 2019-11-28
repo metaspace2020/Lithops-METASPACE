@@ -20,7 +20,13 @@
       "metabolomics/db/mol_db2.pickle",
       "metabolomics/db/mol_db3.pickle",
       "metabolomics/db/mol_db4.pickle",
-      "metabolomics/db/mol_db6.pickle"
+      "metabolomics/db/mol_db6.pickle",
+      "metabolomics/db/mol_db7.pickle",
+      "metabolomics/db/mol_db8.pickle",
+      "metabolomics/db/mol_db9.pickle",
+      "metabolomics/db/mol_db10.pickle",
+      "metabolomics/db/mol_db11.pickle",
+      "metabolomics/db/mol_db12.pickle"
     ],
     "adducts": ["","+H","+Na","+K"],
     "modifiers": [

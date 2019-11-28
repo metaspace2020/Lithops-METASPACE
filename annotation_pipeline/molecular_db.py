@@ -1,5 +1,6 @@
 from io import BytesIO
 from itertools import repeat
+from pathlib import Path
 from ibm_botocore.client import ClientError
 from concurrent.futures import ThreadPoolExecutor
 import pywren_ibm_cloud as pywren
@@ -232,6 +233,24 @@ def dump_mol_db(config, bucket, key, db_id, force=False):
 
     if should_dump:
         mols = requests.get(f'https://metaspace2020.eu/mol_db/v1/databases/{db_id}/molecules?limit=999999&fields=sf').json()['data']
-        mols_df = sorted(set(mol['sf'] for mol in mols))
-        with BytesIO() as fileobj:
-            ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mols_df))
+        mol_sfs = sorted(set(mol['sf'] for mol in mols))
+        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
+
+
+def upload_mol_db_from_file(config, bucket, key, path, force=False):
+    ibm_cos = get_ibm_cos_client(config)
+    try:
+        ibm_cos.head_object(Bucket=bucket, Key=key)
+        should_dump = force
+    except ClientError:
+        should_dump = True
+
+    if should_dump:
+        mol_sfs = sorted(set(pd.read_csv(path)))
+        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
+
+
+def upload_mol_dbs_from_dir(config, bucket, key_prefix, path, force=False):
+    for file in Path(path).glob('mol_db*.csv'):
+        key = f'{key_prefix}/{file.stem}.pickle'
+        upload_mol_db_from_file(config, bucket, key, file, force)
