@@ -1,4 +1,3 @@
-import pickle
 import numpy as np
 import pandas as pd
 from io import BytesIO
@@ -6,7 +5,7 @@ from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-from annotation_pipeline.utils import ds_dims, get_pixel_indices
+from annotation_pipeline.utils import ds_dims, get_pixel_indices, dump_zstd
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 
 
@@ -108,10 +107,10 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
         if n_images > 0:
             print(f'Saving {n_images} images')
             with BytesIO() as compressed_images:
-                np.savez_compressed(compressed_images, formula_images)
+                dump_zstd(formula_images, compressed_images)
                 compressed_images.seek(0)
                 ibm_cos.put_object(Bucket=output_bucket,
-                                   Key=f'{formula_images_prefix}/{id}.npz',
+                                   Key=f'{formula_images_prefix}/{id}.zstd',
                                    Body=compressed_images)
         else:
             print(f'No images to save')

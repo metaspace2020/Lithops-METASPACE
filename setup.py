@@ -23,6 +23,7 @@ setup(name='pywren-annotation-pipeline',
           "pyimzML==1.3.0",
           "requests",
           "msgpack-numpy==0.4.4.3",
+          "zstandard==0.12.0",
           "metaspace2020", # Only needed for experiment notebooks
           "psutil", # Only needed for experiment notebooks
       ])

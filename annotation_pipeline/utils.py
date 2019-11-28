@@ -3,7 +3,9 @@ from pathlib import Path
 import numpy as np
 import ibm_boto3
 from ibm_botocore.client import Config
+from zstandard import ZstdCompressor, ZstdDecompressor
 import pandas as pd
+import pickle
 import os
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
@@ -98,3 +100,13 @@ def get_pywren_stats(filename='stats.csv'):
 def remove_pywren_stats(filename='stats.csv'):
     if os.path.exists(filename):
         os.remove(filename)
+
+
+def dump_zstd(obj, f):
+    compressor = ZstdCompressor(level=1, threads=-1).stream_writer(f)
+    pickle.dump(obj, compressor, pickle.HIGHEST_PROTOCOL)
+
+
+def load_zstd(f):
+    compressor = ZstdDecompressor().stream_reader(f)
+    return pickle.load(compressor)
