@@ -92,10 +92,12 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
 
     def process_centr_segment(obj, id, ibm_cos):
         print(f'Reading centroids segment {obj.key}')
+        # read database relevant part
         centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
-
+        # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
+        # read all segments in loop from COS
         sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i, ibm_cos)
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
