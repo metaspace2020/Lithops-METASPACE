@@ -72,7 +72,7 @@ pickle format and uploaded to IBM cloud in the notebooks.
 | [LIPID MAPS](https://www.lipidmaps.org/) | `mol_db3.pickle` |  |
 | [SwissLipids](https://www.swisslipids.org/) | `mol_db4.pickle` |  |
 | Small database | `mol_db5.pickle` | This database is used in Experiment 2 as an example of a small set of user-supplied molecules for running small, interactive annotation jobs. |
-| Peptide databases | `mol_db7.pickle` <br/> ... <br/> `mol_db12.pickle` | A collection of databases of predicted peptides for Bos Taurus, Sus Scrofa and Homo Sapiens samples. These databases were contributed by [Benjamin Baluff (M4I, Maastricht University)](https://www.maastrichtuniversity.nl/b.balluff) exclusively for use with METASPACE. |  
+| Peptide databases | `mol_db7.pickle` <br/> ... <br/> `mol_db12.pickle` | A collection of databases of predicted peptides. These databases were contributed by [Benjamin Baluff (M4I, Maastricht University)](https://www.maastrichtuniversity.nl/b.balluff) exclusively for use with METASPACE. |  
 
 # Acknowledgements
 
