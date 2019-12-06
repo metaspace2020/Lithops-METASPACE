@@ -72,13 +72,13 @@ def build_database(config, input_db):
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(generate_formulas, adducts)
-    segments_n = set().union(*pw.get_result(futures))
+    segments_n = list(set().union(*pw.get_result(futures)))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
         objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
-        keys = [obj['Key'] for obj in objs['Contents']]
+        keys = [obj['Key'] for obj in objs['Contents']] if 'Contents' in objs else []
 
         segm = set()
         for key in keys:
