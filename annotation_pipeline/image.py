@@ -2,60 +2,57 @@ import pickle
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
-from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
 from annotation_pipeline.utils import ds_dims, get_pixel_indices
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 
 
-def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_px=1):
-    if len(sp_inds) > 0:
-        by_sp_mz = np.argsort(sp_mzs)  # sort order by mz ascending
-        sp_mzs = sp_mzs[by_sp_mz]
-        sp_inds = sp_inds[by_sp_mz]
-        sp_ints = sp_ints[by_sp_mz]
+def gen_iso_images(ds_segm_sp_array_it, centr_df, nrows, ncols, ppm=3):
+    for sp_arr in ds_segm_sp_array_it:
+        sp_inds = sp_arr[:, 0]
+        sp_mzs = sp_arr[:, 1]
+        sp_ints = sp_arr[:, 2]
 
-        by_centr_mz = np.argsort(centr_df.mz.values)  # sort order by mz ascending
-        centr_mzs = centr_df.mz.values[by_centr_mz]
-        centr_f_inds = centr_df.formula_i.values[by_centr_mz]
-        centr_p_inds = centr_df.peak_i.values[by_centr_mz]
-        centr_ints = centr_df.int.values[by_centr_mz]
+        if sp_inds.size > 0:
+            ds_segm_mz_min = sp_mzs[0] - sp_mzs[0] * ppm * 1e-6
+            ds_segm_mz_max = sp_mzs[-1] + sp_mzs[-1] * ppm * 1e-6
 
-        lower = centr_mzs - centr_mzs * ppm * 1e-6
-        upper = centr_mzs + centr_mzs * ppm * 1e-6
-        lower_idx = np.searchsorted(sp_mzs, lower, 'l')
-        upper_idx = np.searchsorted(sp_mzs, upper, 'r')
+            centr_df_slice = centr_df[
+                (centr_df.mz >= ds_segm_mz_min) & (centr_df.mz <= ds_segm_mz_max)
+            ]
 
-        for i, (l, u) in enumerate(zip(lower_idx, upper_idx)):
-            m = None
-            if u - l >= min_px:
-                data = sp_ints[l:u]
-                inds = sp_inds[l:u]
-                row_inds = inds / ncols
-                col_inds = inds % ncols
-                m = coo_matrix((data, (row_inds, col_inds)), shape=(nrows, ncols), copy=True)
-            yield centr_f_inds[i], centr_p_inds[i], centr_ints[i], m
+            centr_mzs = centr_df_slice.mz.values
+            centr_f_inds = centr_df_slice.formula_i.values
+            centr_p_inds = centr_df_slice.peak_i.values
+            centr_ints = centr_df_slice.int.values
+
+            lower = centr_mzs - centr_mzs * ppm * 1e-6
+            upper = centr_mzs + centr_mzs * ppm * 1e-6
+            lower_inds = np.searchsorted(sp_mzs, lower, 'l')
+            upper_inds = np.searchsorted(sp_mzs, upper, 'r')
+
+            for i, (lo_i, up_i) in enumerate(zip(lower_inds, upper_inds)):
+                m = None
+                if up_i - lo_i > 0:
+                    data = sp_ints[lo_i:up_i].copy()
+                    inds = sp_inds[lo_i:up_i]
+                    row_inds = np.uint16(inds / ncols, copy=True)
+                    col_inds = np.uint16(inds % ncols, copy=True)
+                    m = coo_matrix((data, (row_inds, col_inds)), shape=(nrows, ncols))
+                yield centr_f_inds[i], centr_p_inds[i], centr_ints[i], m
 
 
-def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
+def read_ds_segment(ds_bucket, ds_segm_prefix, segm_i, ibm_cos):
+    ds_segm_key = f'{ds_segm_prefix}/{segm_i}.msgpack'
+    data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
+    data = msgpack.loads(data_stream.read())
+    if type(data) == list:
+        sp_arr = np.concatenate(data)
+    else:
+        sp_arr = data
 
-    def read_ds_segment(ds_segm_key):
-        data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
-        data = msgpack.loads(data_stream.read())
-        if type(data) == list:
-            sp_arr = np.concatenate(data)
-        else:
-            sp_arr = data
-        return sp_arr
-
-    with ThreadPoolExecutor(max_workers=128) as pool:
-        ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
-        sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
-
-    sp_arr = [a for a in sp_arr if a.shape[0] > 0]
     if len(sp_arr) > 0:
-        sp_arr = np.concatenate(sp_arr)
         sp_arr = sp_arr[sp_arr[:, 1].argsort()]  # assume mz in column 1
     else:
         sp_arr = np.empty((0, 3))
@@ -97,13 +94,16 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
-        # read all segments in loop from COS
-        sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i, ibm_cos)
+        # read all segments on-demand in loop from COS
+        ds_segm_sp_array_it = (
+            read_ds_segment(ds_bucket, ds_segm_prefix, segm_i, ibm_cos)
+            for segm_i in range(first_ds_segm_i, last_ds_segm_i+1)
+        )
 
-        formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
+        formula_images_it = gen_iso_images(ds_segm_sp_array_it=ds_segm_sp_array_it,
                                            centr_df=centr_df,
-                                           nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
-        formula_metrics_df, formula_images = formula_image_metrics(formula_images_it, compute_metrics)
+                                           nrows=nrows, ncols=ncols, ppm=ppm)
+        formula_metrics_df, formula_images = formula_image_metrics(formula_images_it, compute_metrics, min_px=1)
 
         print(f'Saving {len(formula_images)} images')
         ibm_cos.put_object(Bucket=output_bucket,
