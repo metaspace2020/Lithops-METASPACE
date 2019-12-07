@@ -1,12 +1,10 @@
 import numpy as np
 import pandas as pd
-from collections import OrderedDict, defaultdict
+from collections import OrderedDict
 
 from pyImagingMSpec.image_measures import isotope_image_correlation, isotope_pattern_match
 from cpyImagingMSpec import measure_of_chaos
 from pyImagingMSpec import smoothing
-
-from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
 METRICS = OrderedDict([('chaos', 0), ('spatial', 0), ('spectral', 0), ('msm', 0),
                        ('total_iso_ints', [0, 0, 0, 0]),
@@ -84,13 +82,14 @@ def complete_image_list(images):
     return non_empty_image_n > 1 and images[0] is not None
 
 
-def formula_image_metrics(formula_images_it, compute_metrics):
+def formula_image_metrics(formula_images_it, compute_metrics, save_images):
     """ Compute isotope image metrics for each formula
 
     Args
     ---
     formula_images_it: Iterator
     compute_metrics: function
+    save_images: ImageSaver
 
     Returns
     ---
@@ -99,9 +98,8 @@ def formula_image_metrics(formula_images_it, compute_metrics):
 
     formula_metrics = {}
     formula_images = {}
-
-    formula_images_buffer = defaultdict(lambda: [None] * ISOTOPIC_PEAK_N)
-    formula_ints_buffer = defaultdict(lambda: [0] * ISOTOPIC_PEAK_N)
+    formula_images_size = [0]
+    max_formula_images_size = 512 * 1024 ** 2  # 512MB
 
     def add_metrics(f_i, f_images, f_ints):
         if complete_image_list(f_images):
@@ -109,21 +107,18 @@ def formula_image_metrics(formula_images_it, compute_metrics):
             if f_metrics['msm'] > 0:
                 formula_metrics[f_i] = f_metrics
                 formula_images[f_i] = f_images
+                formula_images_size[0] += sum(img.data.nbytes + img.row.nbytes + img.col.nbytes for img in f_images if img is not None)
+                if formula_images_size[0] > max_formula_images_size:
+                    save_images(formula_images)
+                    formula_images.clear()
+                    formula_images_size[0] = 0
 
-    for f_i, p_i, f_int, image in formula_images_it:
-        formula_images_buffer[f_i][p_i] = image
-        formula_ints_buffer[f_i][p_i] = f_int
+    for i, (f_i, f_intensities, f_images) in enumerate(formula_images_it):
+        add_metrics(f_i, f_images, f_intensities)
 
-        if p_i == ISOTOPIC_PEAK_N - 1:  # last formula image index
-            f_images = formula_images_buffer.pop(f_i)
-            f_ints = formula_ints_buffer.pop(f_i)
-            add_metrics(f_i, f_images, f_ints)
-
-    # process formulas with len(peaks) < max_peaks and those that were cut to dataset max mz
-    for f_i, f_images in formula_images_buffer.items():
-        f_ints = formula_ints_buffer[f_i]
-        add_metrics(f_i, f_images, f_ints)
+    if formula_images:
+        save_images(formula_images)
 
     formula_metrics_df = pd.DataFrame.from_dict(formula_metrics, orient='index')
     formula_metrics_df.index.name = 'formula_i'
-    return formula_metrics_df, formula_images
+    return formula_metrics_df

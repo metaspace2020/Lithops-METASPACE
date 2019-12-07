@@ -1,33 +1,28 @@
 import numpy as np
 import pandas as pd
-from io import BytesIO
+import pickle
 from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
 from annotation_pipeline.utils import ds_dims, get_pixel_indices, dump_zstd
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
+from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
 
-def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_px=1):
+def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_f_inds, centr_p_inds, centr_mzs, centr_ints, nrows, ncols, ppm=3, min_px=1):
+    # assume sp data is sorted by mz order ascending
+    # assume centr data is sorted by mz order ascending
     if len(sp_inds) > 0:
-        by_sp_mz = np.argsort(sp_mzs)  # sort order by mz ascending
-        sp_mzs = sp_mzs[by_sp_mz]
-        sp_inds = sp_inds[by_sp_mz]
-        sp_ints = sp_ints[by_sp_mz]
-
-        by_centr_mz = np.argsort(centr_df.mz.values)  # sort order by mz ascending
-        centr_mzs = centr_df.mz.values[by_centr_mz]
-        centr_f_inds = centr_df.formula_i.values[by_centr_mz]
-        centr_p_inds = centr_df.peak_i.values[by_centr_mz]
-        centr_ints = centr_df.int.values[by_centr_mz]
-
         lower = centr_mzs - centr_mzs * ppm * 1e-6
         upper = centr_mzs + centr_mzs * ppm * 1e-6
         lower_idx = np.searchsorted(sp_mzs, lower, 'l')
         upper_idx = np.searchsorted(sp_mzs, upper, 'r')
+        ranges_df = pd.DataFrame({'formula_i': centr_f_inds, 'range': zip(lower_idx, upper_idx)}).sort_values('formula_i')
 
-        for i, (l, u) in enumerate(zip(lower_idx, upper_idx)):
+        buffer = []
+        for i, (df_index, df_row) in enumerate(ranges_df.iterrows()):
+            l, u = df_row['range']
             m = None
             if u - l >= min_px:
                 data = sp_ints[l:u]
@@ -35,7 +30,15 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
                 row_inds = inds / ncols
                 col_inds = inds % ncols
                 m = coo_matrix((data, (row_inds, col_inds)), shape=(nrows, ncols), copy=True)
-            yield centr_f_inds[i], centr_p_inds[i], centr_ints[i], m
+            buffer.append((centr_p_inds[df_index], centr_ints[df_index], m))
+
+            if (i + 1) % ISOTOPIC_PEAK_N == 0:
+                buffer = np.array(buffer)
+                buffer = buffer[buffer[:, 0].argsort()]  # sort order by peak ascending
+                f_intensities = buffer[:, 1]
+                f_images = buffer[:, 2]
+                buffer = []
+                yield centr_f_inds[df_index], f_intensities, f_images
 
 
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
@@ -90,6 +93,21 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
+    class ImageSaver:
+
+        def __init__(self, ibm_cos, bucket, prefix):
+            self.ibm_cos = ibm_cos
+            self.bucket = bucket
+            self.prefix = prefix
+            self.partition = 0
+
+        def __call__(self, formula_images):
+            print(f'Saving {len(formula_images)} images')
+            self.ibm_cos.put_object(Bucket=self.bucket,
+                                    Key=f'{self.prefix}/{self.partition}.pickle',
+                                    Body=pickle.dumps(formula_images))
+            self.partition += 1
+
     def process_centr_segment(obj, id, ibm_cos):
         print(f'Reading centroids segment {obj.key}')
         centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
@@ -99,21 +117,11 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
         sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i, ibm_cos)
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
-                                           centr_df=centr_df,
+                                           centr_f_inds=centr_df.formula_i.values, centr_p_inds=centr_df.peak_i.values,
+                                           centr_mzs=centr_df.mz.values, centr_ints=centr_df.int.values,
                                            nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
-        formula_metrics_df, formula_images = formula_image_metrics(formula_images_it, compute_metrics)
-        n_images = len(formula_images)
-
-        if n_images > 0:
-            print(f'Saving {n_images} images')
-            with BytesIO() as compressed_images:
-                dump_zstd(formula_images, compressed_images)
-                compressed_images.seek(0)
-                ibm_cos.put_object(Bucket=output_bucket,
-                                   Key=f'{formula_images_prefix}/{id}.zstd',
-                                   Body=compressed_images)
-        else:
-            print(f'No images to save')
+        images_saver = ImageSaver(ibm_cos, output_bucket, f'{formula_images_prefix}/{id}')
+        formula_metrics_df = formula_image_metrics(formula_images_it, compute_metrics, images_saver)
 
         print(f'Centroids segment {obj.key} finished')
         return formula_metrics_df
