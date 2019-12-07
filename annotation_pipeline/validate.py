@@ -1,5 +1,4 @@
 import numpy as np
-import pandas as pd
 from collections import OrderedDict
 
 from pyImagingMSpec.image_measures import isotope_image_correlation, isotope_pattern_match
@@ -82,43 +81,22 @@ def complete_image_list(images):
     return non_empty_image_n > 1 and images[0] is not None
 
 
-def formula_image_metrics(formula_images_it, compute_metrics, save_images):
+def formula_image_metrics(formula_images_it, compute_metrics, images_manager):
     """ Compute isotope image metrics for each formula
 
     Args
     ---
     formula_images_it: Iterator
     compute_metrics: function
-    save_images: ImageSaver
+    images_manager: ImagesManager
 
     Returns
     ---
         pandas.DataFrame
     """
 
-    formula_metrics = {}
-    formula_images = {}
-    formula_images_size = [0]
-    max_formula_images_size = 512 * 1024 ** 2  # 512MB
-
-    def add_metrics(f_i, f_images, f_ints):
+    for f_i, f_ints, f_images in formula_images_it:
         if complete_image_list(f_images):
             f_metrics = compute_metrics(f_images, f_ints)
             if f_metrics['msm'] > 0:
-                formula_metrics[f_i] = f_metrics
-                formula_images[f_i] = f_images
-                formula_images_size[0] += sum(img.data.nbytes + img.row.nbytes + img.col.nbytes for img in f_images if img is not None)
-                if formula_images_size[0] > max_formula_images_size:
-                    save_images(formula_images)
-                    formula_images.clear()
-                    formula_images_size[0] = 0
-
-    for i, (f_i, f_intensities, f_images) in enumerate(formula_images_it):
-        add_metrics(f_i, f_images, f_intensities)
-
-    if formula_images:
-        save_images(formula_images)
-
-    formula_metrics_df = pd.DataFrame.from_dict(formula_metrics, orient='index')
-    formula_metrics_df.index.name = 'formula_i'
-    return formula_metrics_df
+                images_manager(f_i, f_metrics, f_images)

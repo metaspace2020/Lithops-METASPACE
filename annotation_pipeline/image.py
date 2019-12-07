@@ -5,9 +5,53 @@ from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-from annotation_pipeline.utils import ds_dims, get_pixel_indices, dump_zstd
+from annotation_pipeline.utils import ds_dims, get_pixel_indices
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 from annotation_pipeline.segment import ISOTOPIC_PEAK_N
+
+
+class ImagesManager:
+    max_formula_images_size = 512 * 1024 ** 2  # 512MB
+
+    def __init__(self, ibm_cos, bucket, prefix):
+        self.formula_metrics = {}
+        self.formula_images = {}
+
+        self._formula_images_size = 0
+        self._ibm_cos = ibm_cos
+        self._bucket = bucket
+        self._prefix = prefix
+        self._partition = 0
+
+    def __call__(self, f_i, f_metrics, f_images):
+        self.add_f_metrics(f_i, f_metrics)
+        self.add_f_images(f_i, f_images)
+
+    @staticmethod
+    def images_size(f_images):
+        return sum(img.data.nbytes + img.row.nbytes + img.col.nbytes for img in f_images if img is not None)
+
+    def add_f_images(self, f_i, f_images):
+        self.formula_images[f_i] = f_images
+        self._formula_images_size += ImagesManager.images_size(f_images)
+        if self._formula_images_size > self.__class__.max_formula_images_size:
+            self.save_images()
+            self.formula_images.clear()
+            self._formula_images_size = 0
+
+    def add_f_metrics(self, f_i, f_metrics):
+        self.formula_metrics[f_i] = f_metrics
+
+    def save_images(self):
+        print(f'Saving {len(self.formula_images)} images')
+        self._ibm_cos.put_object(Bucket=self._bucket,
+                                 Key=f'{self._prefix}/{self._partition}.pickle',
+                                 Body=pickle.dumps(self.formula_images))
+        self._partition += 1
+
+    def finish(self):
+        self.save_images()
+        self.formula_images.clear()
 
 
 def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_f_inds, centr_p_inds, centr_mzs, centr_ints, nrows, ncols, ppm=3, min_px=1):
@@ -93,21 +137,6 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
-    class ImageSaver:
-
-        def __init__(self, ibm_cos, bucket, prefix):
-            self.ibm_cos = ibm_cos
-            self.bucket = bucket
-            self.prefix = prefix
-            self.partition = 0
-
-        def __call__(self, formula_images):
-            print(f'Saving {len(formula_images)} images')
-            self.ibm_cos.put_object(Bucket=self.bucket,
-                                    Key=f'{self.prefix}/{self.partition}.pickle',
-                                    Body=pickle.dumps(formula_images))
-            self.partition += 1
-
     def process_centr_segment(obj, id, ibm_cos):
         print(f'Reading centroids segment {obj.key}')
         centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
@@ -120,10 +149,13 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, formula_ima
                                            centr_f_inds=centr_df.formula_i.values, centr_p_inds=centr_df.peak_i.values,
                                            centr_mzs=centr_df.mz.values, centr_ints=centr_df.int.values,
                                            nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
-        images_saver = ImageSaver(ibm_cos, output_bucket, f'{formula_images_prefix}/{id}')
-        formula_metrics_df = formula_image_metrics(formula_images_it, compute_metrics, images_saver)
+        images_manager = ImagesManager(ibm_cos, output_bucket, f'{formula_images_prefix}/{id}')
+        formula_image_metrics(formula_images_it, compute_metrics, images_manager)
+        images_manager.finish()
 
         print(f'Centroids segment {obj.key} finished')
+        formula_metrics_df = pd.DataFrame.from_dict(images_manager.formula_metrics, orient='index')
+        formula_metrics_df.index.name = 'formula_i'
         return formula_metrics_df
 
     return process_centr_segment
