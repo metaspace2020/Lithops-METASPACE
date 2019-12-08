@@ -3,9 +3,7 @@ from pathlib import Path
 import numpy as np
 import ibm_boto3
 from ibm_botocore.client import Config
-from zstandard import ZstdCompressor, ZstdDecompressor
 import pandas as pd
-import pickle
 import os
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)

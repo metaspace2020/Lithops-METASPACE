@@ -1,6 +1,6 @@
+import pickle
 import numpy as np
 import pandas as pd
-import pickle
 from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
