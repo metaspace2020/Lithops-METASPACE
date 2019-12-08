@@ -43,20 +43,35 @@ class ImagesManager:
         self.formula_metrics[f_i] = f_metrics
 
     def save_images(self):
-        print(f'Saving {len(self.formula_images)} images')
-        self._ibm_cos.put_object(Bucket=self._bucket,
-                                 Key=f'{self._prefix}/{self._partition}.pickle',
-                                 Body=pickle.dumps(self.formula_images))
-        self._partition += 1
+        if self.formula_images:
+            print(f'Saving {len(self.formula_images)} images')
+            self._ibm_cos.put_object(Bucket=self._bucket,
+                                     Key=f'{self._prefix}/{self._partition}.pickle',
+                                     Body=pickle.dumps(self.formula_images))
+            self._partition += 1
+        else:
+            print(f'No images to save')
 
     def finish(self):
         self.save_images()
         self.formula_images.clear()
+        self._formula_images_size = 0
 
 
 def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_f_inds, centr_p_inds, centr_mzs, centr_ints, nrows, ncols, ppm=3, min_px=1):
     # assume sp data is sorted by mz order ascending
     # assume centr data is sorted by mz order ascending
+
+    def yield_buffer(buffer):
+        while len(buffer) < ISOTOPIC_PEAK_N:
+            buffer.append((buffer[0][0], len(buffer) - 1, 0, None))
+        buffer = np.array(buffer)
+        buffer = buffer[buffer[:, 1].argsort()]  # sort order by peak ascending
+        f_i = buffer[0][0]
+        f_ints = buffer[:, 2]
+        f_images = buffer[:, 3]
+        return f_i, f_ints, f_images
+
     if len(sp_inds) > 0:
         lower = centr_mzs - centr_mzs * ppm * 1e-6
         upper = centr_mzs + centr_mzs * ppm * 1e-6
@@ -65,7 +80,11 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_f_inds, centr_p_inds, centr_m
         ranges_df = pd.DataFrame({'formula_i': centr_f_inds, 'range': zip(lower_idx, upper_idx)}).sort_values('formula_i')
 
         buffer = []
-        for i, (df_index, df_row) in enumerate(ranges_df.iterrows()):
+        for df_index, df_row in ranges_df.iterrows():
+            if len(buffer) != 0 and buffer[0][0] != centr_f_inds[df_index]:
+                yield yield_buffer(buffer)
+                buffer = []
+
             l, u = df_row['range']
             m = None
             if u - l >= min_px:
@@ -74,15 +93,10 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_f_inds, centr_p_inds, centr_m
                 row_inds = inds / ncols
                 col_inds = inds % ncols
                 m = coo_matrix((data, (row_inds, col_inds)), shape=(nrows, ncols), copy=True)
-            buffer.append((centr_p_inds[df_index], centr_ints[df_index], m))
+            buffer.append((centr_f_inds[df_index], centr_p_inds[df_index], centr_ints[df_index], m))
 
-            if (i + 1) % ISOTOPIC_PEAK_N == 0:
-                buffer = np.array(buffer)
-                buffer = buffer[buffer[:, 0].argsort()]  # sort order by peak ascending
-                f_intensities = buffer[:, 1]
-                f_images = buffer[:, 2]
-                buffer = []
-                yield centr_f_inds[df_index], f_intensities, f_images
+        if len(buffer) != 0:
+            yield yield_buffer(buffer)
 
 
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
