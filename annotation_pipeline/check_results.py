@@ -41,10 +41,13 @@ def check_results(results_df, ref_results):
                                     & (df.modifier == '')]
                         [['formula', 'adduct', 'chaos', 'spatial', 'spectral', 'msm', 'fdr']])
 
-    merged_results = (ref_results
-                      .merge(filtered_results, how='outer',
-                             left_on=['formula', 'adduct'], right_on=['formula', 'adduct'], suffixes=['_ref', ''])
-                      .sort_values(['formula', 'adduct']))
+    merged_results = (filtered_results
+                      .rename_axis(index='ion_i')
+                      .reset_index(drop=False)
+                      .merge(ref_results, how='outer',
+                             left_on=['formula', 'adduct'], right_on=['formula', 'adduct'], suffixes=['', '_ref'])
+                      .sort_values(['formula', 'adduct'])
+                      .set_index('ion_i'))
 
     # Validate no missing results (Should be zero as it's not affected by numeric instability)
     missing_results = merged_results[merged_results.fdr.isna() & merged_results.fdr_ref.notna()]
