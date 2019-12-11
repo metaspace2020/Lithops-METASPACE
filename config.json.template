@@ -12,7 +12,6 @@
     "storage_bucket": "****",
     "runtime": "ibmfunctions/pywren-metabolomics:3.6",
     "include_modules": ["annotation_pipeline"],
-    "data_cleaner": true
   },
   "storage": {
     "ds_bucket": "****",
