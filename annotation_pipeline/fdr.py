@@ -3,7 +3,6 @@ import pickle
 import numpy as np
 import pandas as pd
 import msgpack_numpy as msgpack
-import pywren_ibm_cloud as pywren
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
@@ -16,7 +15,7 @@ def _get_random_adduct_set(size, adducts, offset):
     return np.array(adducts)[idxs]
 
 
-def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
+def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 
     def build_ranking(group_i, ranking_i, database, modifier, adduct, id, ibm_cos):
         print("Building ranking...")
@@ -27,7 +26,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        mols = pickle.loads(ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=database)['Body'].read())
+        mols = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=database)['Body'].read())
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -38,11 +37,11 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
         formula_to_id = {}
-        objs = ibm_cos.list_objects_v2(Bucket=config["storage"]["db_bucket"],
+        objs = ibm_cos.list_objects_v2(Bucket=bucket,
                                        Prefix=f'{input_db["formula_to_id_chunks"]}/')
         keys = [obj['Key'] for obj in objs['Contents']]
         for key in keys:
-            data_stream = ibm_cos.get_object(Bucket=config["storage"]["db_bucket"], Key=key)['Body']
+            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
             formula_to_id_chunk = msgpack.loads(data_stream.read(), encoding='utf-8')
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
@@ -60,7 +59,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
             ranking_df = ranking_df[~ranking_df.msm.isna()]
             key = f'{input_data["fdr_rankings"]}/{group_i}/decoy{ranking_i}.pickle'
 
-        ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"], Key=key, Body=pickle.dumps(ranking_df))
+        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(ranking_df))
         return id, key
 
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
@@ -76,7 +75,6 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
         ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(build_ranking, ranking_jobs)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
@@ -87,7 +85,7 @@ def build_fdr_rankings(config, input_data, input_db, formula_scores_df):
     return rankings_df
 
 
-def calculate_fdrs(config, input_data, rankings_df):
+def calculate_fdrs(pw, data_bucket, rankings_df):
 
     def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
         target = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=target_key)['Body'].read())
@@ -118,9 +116,6 @@ def calculate_fdrs(config, input_data, rankings_df):
                         adduct=target_row.adduct,
                         modifier=target_row.modifier))
         return mols
-
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    data_bucket = config['storage']['ds_bucket']
 
     ranking_jobs = []
     for group_i, group in rankings_df.groupby('group_i'):
