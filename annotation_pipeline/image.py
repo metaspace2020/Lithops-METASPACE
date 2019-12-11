@@ -111,7 +111,7 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_c
         while data is None:
             try:
                 data = msgpack.loads(data_stream.read())
-            except ReadTimeoutError:
+            except:
                 pass
 
         if type(data) == list:
