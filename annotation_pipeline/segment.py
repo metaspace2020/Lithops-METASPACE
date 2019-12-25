@@ -3,7 +3,6 @@ import pandas as pd
 import sys
 from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, clean_from_cos
 from concurrent.futures import ThreadPoolExecutor
-import pywren_ibm_cloud as pywren
 import msgpack_numpy as msgpack
 
 ISOTOPIC_PEAK_N = 4
@@ -196,10 +195,10 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
         print(f'Extracting first peak mz values from clipped centroids dataframe {obj.key}')
         centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
         first_peak_df = centr_df[centr_df.peak_i == 0]
-        return first_peak_df.mz
+        return first_peak_df.mz.values
 
     futures = pw.map(get_first_peak_mz, f'{bucket}/{clip_centr_chunk_prefix}/')
-    first_peak_df_mz = pd.concat(pw.get_result(futures))
+    first_peak_df_mz = np.concatenate(pw.get_result(futures))
     append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
 
     ds_size_mb = ds_segm_n * ds_segm_size_mb
@@ -208,7 +207,7 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
     centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb, centr_n // peaks_per_centr_segm, 32))
 
     segm_bounds_q = [i * 1 / centr_segm_n for i in range(0, centr_segm_n)]
-    centr_segm_lower_bounds = np.array(list(np.quantile(first_peak_df_mz, q) for q in segm_bounds_q))
+    centr_segm_lower_bounds = np.quantile(first_peak_df_mz, segm_bounds_q)
 
     logger.info(f'Generated {len(centr_segm_lower_bounds)} centroids bounds: {centr_segm_lower_bounds[0]}...{centr_segm_lower_bounds[-1]}')
     return centr_segm_lower_bounds
