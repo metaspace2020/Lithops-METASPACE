@@ -246,7 +246,7 @@ def upload_mol_db_from_file(config, bucket, key, path, force=False):
         should_dump = True
 
     if should_dump:
-        mol_sfs = sorted(set(pd.read_csv(path)))
+        mol_sfs = sorted(set(pd.read_csv(path).sf))
         ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
 
 
