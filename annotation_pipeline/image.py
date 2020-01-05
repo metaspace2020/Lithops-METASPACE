@@ -106,13 +106,17 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
 
     def read_ds_segment(ds_segm_key):
-        data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
         data = None
+        attempts = 1
         while data is None:
             try:
+                data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
                 data = msgpack.loads(data_stream.read())
-            except:
-                pass
+            except Exception as e:
+                print(e)
+                if attempts >= 5:
+                    raise
+                attempts += 1
 
         if type(data) == list:
             sp_arr = np.concatenate(data)
