@@ -10,7 +10,7 @@ from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
 
 class ImagesManager:
-    min_memory_allowed = 256 * 1024 ** 2  # 256MB
+    min_memory_allowed = 128 * 1024 ** 2  # 128MB
 
     def __init__(self, internal_storage, bucket, max_formula_images_size):
         if max_formula_images_size < self.__class__.min_memory_allowed:
