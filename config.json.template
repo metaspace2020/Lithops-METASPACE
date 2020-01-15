@@ -6,7 +6,9 @@
   },
   "ibm_cos": {
     "endpoint": "https://s3.****.cloud-object-storage.appdomain.cloud",
-    "api_key": "****"
+    "private_endpoint": "https://s3.private.****.cloud-object-storage.appdomain.cloud",
+    "access_key": "****",
+    "secret_key": "****"
   },
   "pywren": {
     "storage_bucket": "****",

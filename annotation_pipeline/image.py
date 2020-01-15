@@ -3,7 +3,6 @@ import pandas as pd
 from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
-from ibm_botocore.exceptions import ReadTimeoutError
 
 from annotation_pipeline.utils import ds_dims, get_pixel_indices
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
@@ -11,14 +10,18 @@ from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
 
 class ImagesManager:
-    max_formula_images_size = 256 * 1024 ** 2  # 256MB
+    min_memory_allowed = 128 * 1024 ** 2  # 128MB
 
-    def __init__(self, internal_storage, bucket):
+    def __init__(self, internal_storage, bucket, max_formula_images_size):
+        if max_formula_images_size < self.__class__.min_memory_allowed:
+            raise Exception(f'There isn\'t enough memory to generate images, consider increasing PyWren\'s memory.')
+
         self.formula_metrics = {}
         self.formula_images = {}
         self.cloud_objs = []
 
         self._formula_images_size = 0
+        self._max_formula_images_size = max_formula_images_size
         self._internal_storage = internal_storage
         self._bucket = bucket
         self._partition = 0
@@ -34,7 +37,7 @@ class ImagesManager:
     def add_f_images(self, f_i, f_images):
         self.formula_images[f_i] = f_images
         self._formula_images_size += ImagesManager.images_size(f_images)
-        if self._formula_images_size > self.__class__.max_formula_images_size:
+        if self._formula_images_size > self._max_formula_images_size:
             self.save_images()
             self.formula_images.clear()
             self._formula_images_size = 0
@@ -159,7 +162,7 @@ def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
 
 
 def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments_bounds,
-                           coordinates, image_gen_config):
+                           coordinates, image_gen_config, pw_mem_mb, ds_segm_size_mb):
     sample_area_mask = make_sample_area_mask(coordinates)
     nrows, ncols = ds_dims(coordinates)
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
@@ -177,7 +180,10 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
                                            centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
-        images_manager = ImagesManager(internal_storage, output_bucket)
+        safe_mb = 1024
+        max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 2
+        print(f'max_formula_images_mb: {max_formula_images_mb}')
+        images_manager = ImagesManager(internal_storage, output_bucket, max_formula_images_mb * 1024 ** 2)
         formula_image_metrics(formula_images_it, compute_metrics, images_manager)
         images_cloud_objs = images_manager.finish()
 

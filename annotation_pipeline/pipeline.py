@@ -83,7 +83,9 @@ class Pipeline(object):
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
                                                        self.input_data["ds_segments"],
-                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config)
+                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config,
+                                                       self.pywren_executor.config['pywren']['runtime_memory'],
+                                                       self.ds_segm_size_mb)
 
         futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/')
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
