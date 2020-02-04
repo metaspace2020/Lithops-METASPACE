@@ -1,27 +1,30 @@
 import logging
 from pathlib import Path
+from datetime import datetime
 import numpy as np
 import ibm_boto3
-from ibm_botocore.client import Config
 import pandas as pd
-import os
+import csv
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
 logger = logging.getLogger('annotation-pipeline')
+
 # handler = logging.StreamHandler()
 # format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 # handler.setFormatter(format)
 # logger.addHandler(handler)
 # logger.setLevel(logging.INFO)
 
+STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
+
 
 def get_ibm_cos_client(config):
     return ibm_boto3.client(service_name='s3',
-                            ibm_api_key_id=config['ibm_cos']['api_key'],
-                            config=Config(signature_version='oauth'),
+                            aws_access_key_id=config['ibm_cos']['access_key'],
+                            aws_secret_access_key=config['ibm_cos']['secret_key'],
                             endpoint_url=config['ibm_cos']['endpoint'])
 
 
@@ -67,34 +70,30 @@ def get_pixel_indices(coordinates):
     return pixel_indices
 
 
-def init_pywren_stats(filename='stats.csv'):
-    with open(filename, 'w') as csvfile:
-        csvfile.write('Function name,Actions number,Actions memory,Average runtime' + '\n')
-
-
-def append_pywren_stats(futures, runtime_memory, filename='stats.csv'):
-    if not os.path.isfile(filename):
-        return
-
+def append_pywren_stats(futures, runtime_memory, plus_objects=0, minus_objects=0):
     if type(futures) != list:
         futures = [futures]
 
     actions_num = len(futures)
-    func_name = futures[0].invoke_status['func_name']
-    average_runtime = np.average([future.run_status['exec_time'] for future in futures])
+    # func_name = futures[0].invoke_status['func_name']
+    func_name = "funcname"
+    average_runtime = np.average([future._call_status['exec_time'] for future in futures])
+    headers = ['Function', 'Actions', 'Memory', 'Runtime']
+    content = [func_name, actions_num, runtime_memory, average_runtime, plus_objects, minus_objects]
 
-    with open(filename, 'a') as csvfile:
-        csvfile.write(f'{func_name},{actions_num},{runtime_memory},{average_runtime}\n')
+    if not Path(STATUS_PATH).exists():
+        with open(STATUS_PATH, 'w') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=headers)
+            writer.writeheader()
+
+    with open(STATUS_PATH, 'a') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=headers)
+        writer.writerow(dict(zip(headers, content)))
 
 
-def get_pywren_stats(filename='stats.csv'):
-    stats = pd.read_csv(filename)
+def get_pywren_stats():
+    stats = pd.read_csv(STATUS_PATH)
     unit_price_in_dollars = 0.000017
-    calc_func = lambda row: row[1] * (row[2]/1024) * row[3] * unit_price_in_dollars
+    calc_func = lambda row: row[1] * (row[2] / 1024) * row[3] * unit_price_in_dollars
     print('Total PyWren cost:', np.sum(np.apply_along_axis(calc_func, 1, stats)), '$')
     return stats
-
-
-def remove_pywren_stats(filename='stats.csv'):
-    if os.path.exists(filename):
-        os.remove(filename)
