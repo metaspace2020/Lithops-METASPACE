@@ -87,11 +87,11 @@ class Pipeline(object):
 
         futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/')
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
-        append_pywren_stats(futures, memory=self.pywren_executor.config['pywren']['runtime_memory'],
-                            plus_objects=len(images_cloud_objs))
-
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         self.images_cloud_objs = np.concatenate(images_cloud_objs)
+        append_pywren_stats(futures, memory=self.pywren_executor.config['pywren']['runtime_memory'],
+                            plus_objects=len(self.images_cloud_objs))
+
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
 
     def run_fdr(self):
