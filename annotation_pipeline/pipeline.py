@@ -49,7 +49,7 @@ class Pipeline(object):
 
     def split_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"])
-        self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.sp_n, self.imzml_parser, self.coordinates)
+        self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.imzml_parser, self.coordinates)
 
     def segment_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
