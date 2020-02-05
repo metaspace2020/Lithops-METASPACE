@@ -70,16 +70,15 @@ def get_pixel_indices(coordinates):
     return pixel_indices
 
 
-def append_pywren_stats(futures, runtime_memory, plus_objects=0, minus_objects=0):
+def append_pywren_stats(futures, memory, plus_objects=0, minus_objects=0):
     if type(futures) != list:
         futures = [futures]
 
     actions_num = len(futures)
-    # func_name = futures[0].invoke_status['func_name']
-    func_name = "funcname"
+    func_name = futures[0].function_name
     average_runtime = np.average([future._call_status['exec_time'] for future in futures])
-    headers = ['Function', 'Actions', 'Memory', 'Runtime']
-    content = [func_name, actions_num, runtime_memory, average_runtime, plus_objects, minus_objects]
+    headers = ['Function', 'Actions', 'Memory', 'Runtime', '+Objects', '-Objects']
+    content = [func_name, actions_num, memory, average_runtime, plus_objects, minus_objects]
 
     if not Path(STATUS_PATH).exists():
         with open(STATUS_PATH, 'w') as csvfile:
@@ -91,8 +90,8 @@ def append_pywren_stats(futures, runtime_memory, plus_objects=0, minus_objects=0
         writer.writerow(dict(zip(headers, content)))
 
 
-def get_pywren_stats():
-    stats = pd.read_csv(STATUS_PATH)
+def get_pywren_stats(log_path=STATUS_PATH):
+    stats = pd.read_csv(log_path)
     unit_price_in_dollars = 0.000017
     calc_func = lambda row: row[1] * (row[2] / 1024) * row[3] * unit_price_in_dollars
     print('Total PyWren cost:', np.sum(np.apply_along_axis(calc_func, 1, stats)), '$')

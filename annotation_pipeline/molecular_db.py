@@ -73,7 +73,8 @@ def build_database(config, input_db):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(generate_formulas, adducts)
     segments_n = list(set().union(*pw.get_result(futures)))
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=len(adducts) * len(segments_n))
 
     def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
@@ -97,7 +98,7 @@ def build_database(config, input_db):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(get_formulas_number_per_chunk, segments_n)
     formulas_nums = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'])
 
     def store_formulas_segment(segm_i, ibm_cos):
         segm = deduplicate_formulas_segment(segm_i, ibm_cos)
@@ -130,7 +131,8 @@ def build_database(config, input_db):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(store_formulas_segment, segments_n)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=N_FORMULAS_SEGMENTS, minus_objects=len(adducts) * len(segments_n))
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
@@ -166,7 +168,8 @@ def build_database(config, input_db):
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
     futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID))
     results = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=N_FORMULA_TO_ID)
     logger.info(f'Built {len(results)} formula_to_id dictionaries chunks')
 
     return num_formulas, n_formulas_chunks
@@ -211,10 +214,10 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
     })
 
     pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    iterdata = f'{bucket}/{formulas_chunks_prefix}/'
-    futures = pw.map(calculate_peaks_chunk, iterdata)
+    futures = pw.map(calculate_peaks_chunk, f'{bucket}/{formulas_chunks_prefix}/')
     centroids_chunks_n = pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=len(futures))
 
     num_centroids = sum(centroids_chunks_n)
     n_centroids_chunks = len(centroids_chunks_n)
