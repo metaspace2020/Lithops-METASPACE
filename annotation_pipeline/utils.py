@@ -80,6 +80,7 @@ def append_pywren_stats(futures, memory, plus_objects=0, minus_objects=0):
     headers = ['Function', 'Actions', 'Memory', 'Runtime', '+Objects', '-Objects']
     content = [func_name, actions_num, memory, average_runtime, plus_objects, minus_objects]
 
+    Path('logs').mkdir(exist_ok=True)
     if not Path(STATUS_PATH).exists():
         with open(STATUS_PATH, 'w') as csvfile:
             writer = csv.DictWriter(csvfile, fieldnames=headers)
