@@ -6,55 +6,53 @@ from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
 ISOTOPIC_PEAK_N = 4
-MAX_MZ_VALUE = 10**5
+MAX_MZ_VALUE = 10 ** 5
 
 
-def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
+def chunk_spectra(config, input_data, imzml_parser, coordinates):
+    cos_client = get_ibm_cos_client(config)
+    sp_id_to_idx = get_pixel_indices(coordinates)
 
-    def chunk_list(l, size=5000):
-        n = (len(l) - 1) // size + 1
-        for i in range(n):
-            yield l[size * i:size * (i + 1)]
+    def chunk_size(coords, max_size=512 * 1024 ** 2):
+        curr_sp_i = 0
+        sp_inds_list, mzs_list, ints_list = [], [], []
+
+        estimated_size_mb = 0
+        for x, y in coords:
+            mzs_, ints_ = imzml_parser.getspectrum(curr_sp_i)
+            mzs_, ints_ = map(np.array, [mzs_, ints_])
+            sp_idx = sp_id_to_idx[curr_sp_i]
+            sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
+            mzs_list.append(mzs_)
+            ints_list.append(ints_)
+            estimated_size_mb += 2 * mzs_.nbytes + ints_.nbytes
+            curr_sp_i += 1
+            if estimated_size_mb > max_size:
+                yield sp_inds_list, mzs_list, ints_list
+                sp_inds_list, mzs_list, ints_list = [], [], []
+                estimated_size_mb = 0
+
+        if len(sp_inds_list) > 0:
+            yield sp_inds_list, mzs_list, ints_list
 
     def _upload_chunk(ch_i, sp_mz_int_buf):
         chunk = msgpack.dumps(sp_mz_int_buf)
+        key = f'{input_data["ds_chunks"]}/{ch_i}.msgpack'
         size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
         cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
-                              Key=keys[ch_i],
+                              Key=key,
                               Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
+        return key
 
-    cos_client = get_ibm_cos_client(config)
+    max_size = 512 * 1024 ** 2  # 512MB
+    chunk_it = chunk_size(coordinates, max_size)
 
-    sp_id_to_idx = get_pixel_indices(coordinates)
-
-    chunk_size = 5000
-    coord_chunk_it = chunk_list(coordinates, chunk_size)
-
-    sp_i_lower_bounds = []
-    sp_i_bound = 0
-    while sp_i_bound <= sp_n:
-        sp_i_lower_bounds.append(sp_i_bound)
-        sp_i_bound += chunk_size
-
-    logger.info(f'Parsing dataset into {len(sp_i_lower_bounds)} chunks')
-    keys = [f'{input_data["ds_chunks"]}/{ch_i}.msgpack' for ch_i in range(len(sp_i_lower_bounds))]
-
+    futures = []
     with ThreadPoolExecutor() as ex:
-        for ch_i, coord_chunk in enumerate(coord_chunk_it):
-            logger.info(f'Parsing spectra chunk {ch_i}')
-            sp_i = sp_i_lower_bounds[ch_i]
-            sp_inds_list, mzs_list, ints_list = [], [], []
-            for x, y in coord_chunk:
-                mzs_, ints_ = imzml_parser.getspectrum(sp_i)
-                mzs_, ints_ = map(np.array, [mzs_, ints_])
-                sp_idx = sp_id_to_idx[sp_i]
-                sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
-                mzs_list.append(mzs_)
-                ints_list.append(ints_)
-                sp_i += 1
-
+        for ch_i, chunk in enumerate(chunk_it):
+            sp_inds_list, mzs_list, ints_list = chunk
             dtype = imzml_parser.mzPrecision
             mzs = np.concatenate(mzs_list)
             by_mz = np.argsort(mzs)
@@ -62,8 +60,13 @@ def chunk_spectra(config, input_data, sp_n, imzml_parser, coordinates):
                                       mzs[by_mz],
                                       np.concatenate(ints_list)[by_mz]], dtype).T
 
-            ex.submit(_upload_chunk, ch_i, sp_mz_int_buf)
+            logger.info(f'Parsed spectra chunk {ch_i}')
+            futures.append(ex.submit(_upload_chunk, ch_i, sp_mz_int_buf))
 
+        logger.info(f'Parsed dataset into {len(futures)} chunks')
+
+    logger.info(f'Uploaded {len(futures)} dataset chunks')
+    keys = [future.result() for future in futures]
     return keys
 
 
@@ -85,7 +88,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
 
     float_prec = 4 if imzml_parser.mzPrecision == 'f' else 8
     segm_arr_columns = 3
-    segm_n = segm_arr_columns * (total_n_mz * float_prec) // (ds_segm_size_mb * 2**20)
+    segm_n = segm_arr_columns * (total_n_mz * float_prec) // (ds_segm_size_mb * 2 ** 20)
     segm_n = max(1, int(segm_n))
 
     segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n + 1)]
@@ -97,6 +100,8 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
 
 
 def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segments_bounds):
+    ds_segm_n = len(ds_segments_bounds)
+
     # extend boundaries of the first and last segments
     # to include all mzs outside of the spectra sample mz range
     ds_segments_bounds = ds_segments_bounds.copy()
@@ -123,9 +128,11 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
 
-    futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/')
-    pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/')
+    pw.get_result(first_futures)
+    if not isinstance(first_futures, list): first_futures = [first_futures]
+    append_pywren_stats(first_futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=len(first_futures) * len(ds_segments_bounds))
 
     def merge_spectra_chunk_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} spectra chunks')
@@ -159,13 +166,15 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             with ThreadPoolExecutor(max_workers=128) as pool:
                 pool.map(_second_level_segment_upload, range(len(bounds_list)))
 
-    futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)))
-    pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)))
+    pw.get_result(second_futures)
+    append_pywren_stats(second_futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
+
+    return ds_segm_n
 
 
 def clip_centr_df(pw, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_min, mz_max):
-
     def clip_centr_df_chunk(obj, id, ibm_cos):
         print(f'Clipping centroids dataframe chunk {obj.key}')
         centroids_df_chunk = pd.read_msgpack(obj.data_stream._raw_stream).sort_values('mz')
@@ -182,7 +191,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_m
 
     futures = pw.map(clip_centr_df_chunk, f'{bucket}/{centr_chunks_prefix}/')
     centr_n = sum(pw.get_result(futures))
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'], plus_objects=len(futures))
 
     logger.info(f'Prepared {centr_n} centroids')
     return centr_n
@@ -199,7 +208,7 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
 
     futures = pw.map(get_first_peak_mz, f'{bucket}/{clip_centr_chunk_prefix}/')
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'])
 
     ds_size_mb = ds_segm_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
@@ -214,6 +223,7 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
 
 
 def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, centr_segm_lower_bounds):
+    centr_segm_n = len(centr_segm_lower_bounds)
     centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
 
     # define first level segmentation and then segment each one into desired number
@@ -242,9 +252,10 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
-    futures = pw.map(segment_centr_chunk, f'{bucket}/{clip_centr_chunk_prefix}/')
-    pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    first_futures = pw.map(segment_centr_chunk, f'{bucket}/{clip_centr_chunk_prefix}/')
+    pw.get_result(first_futures)
+    append_pywren_stats(first_futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=len(first_futures) * len(centr_segm_lower_bounds))
 
     def merge_centr_df_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} clipped centroids chunks')
@@ -277,6 +288,9 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
             with ThreadPoolExecutor(max_workers=128) as pool:
                 pool.map(_second_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
-    futures = pw.map(merge_centr_df_segments, range(len(centr_segm_lower_bounds)))
-    pw.get_result(futures)
-    append_pywren_stats(futures, pw.config['pywren']['runtime_memory'])
+    second_futures = pw.map(merge_centr_df_segments, range(len(centr_segm_lower_bounds)))
+    pw.get_result(second_futures)
+    append_pywren_stats(second_futures, memory=pw.config['pywren']['runtime_memory'],
+                        plus_objects=centr_segm_n, minus_objects=len(first_futures) * len(centr_segm_lower_bounds))
+
+    return centr_segm_n

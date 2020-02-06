@@ -49,14 +49,14 @@ class Pipeline(object):
 
     def split_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"])
-        self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.sp_n, self.imzml_parser, self.coordinates)
+        self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.imzml_parser, self.coordinates)
 
     def segment_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
         self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb, sample_ratio=0.05)
-        self.ds_segm_n = len(self.ds_segments_bounds)
-        segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"],
-                        self.input_data["ds_segments"], self.ds_segments_bounds)
+        self.ds_segm_n = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
+                                         self.input_data["ds_chunks"], self.input_data["ds_segments"],
+                                         self.ds_segments_bounds)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
@@ -71,9 +71,9 @@ class Pipeline(object):
         self.centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.config["storage"]["db_bucket"],
                                                              self.input_db["clipped_centroids_chunks"], self.centr_n,
                                                              self.ds_segm_n, self.ds_segm_size_mb)
-        self.centr_segm_n = len(self.centr_segm_lower_bounds)
-        segment_centroids(self.pywren_executor, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"],
-                          self.input_db["centroids_segments"], self.centr_segm_lower_bounds)
+        self.centr_segm_n = segment_centroids(self.pywren_executor, self.config["storage"]["db_bucket"],
+                                              self.input_db["clipped_centroids_chunks"],
+                                              self.input_db["centroids_segments"], self.centr_segm_lower_bounds)
         logger.info(f'Segmented centroids chunks into {self.centr_segm_n} segments')
 
     def annotate(self):
@@ -89,10 +89,11 @@ class Pipeline(object):
 
         futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/')
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
-        append_pywren_stats(futures, self.pywren_executor.config['pywren']['runtime_memory'])
-
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         self.images_cloud_objs = np.concatenate(images_cloud_objs)
+        append_pywren_stats(futures, memory=self.pywren_executor.config['pywren']['runtime_memory'],
+                            plus_objects=len(self.images_cloud_objs))
+
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
 
     def run_fdr(self):
