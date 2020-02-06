@@ -130,6 +130,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
 
     first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/')
     pw.get_result(first_futures)
+    if not isinstance(first_futures, list): first_futures = [first_futures]
     append_pywren_stats(first_futures, memory=pw.config['pywren']['runtime_memory'],
                         plus_objects=len(first_futures) * len(ds_segments_bounds))
 
