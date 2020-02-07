@@ -15,6 +15,10 @@ def _get_random_adduct_set(size, adducts, offset):
     return np.array(adducts)[idxs]
 
 
+def msgpack_load_text(stream):
+    return msgpack.load(stream, encoding='utf-8')
+
+
 def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 
     def build_ranking(group_i, ranking_i, database, modifier, adduct, id, ibm_cos):
@@ -41,7 +45,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
                                        Prefix=f'{input_db["formula_to_id_chunks"]}/')
         keys = [obj['Key'] for obj in objs['Contents']]
         for key in keys:
-            formula_to_id_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack.load)
+            formula_to_id_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack_load_text)
 
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
