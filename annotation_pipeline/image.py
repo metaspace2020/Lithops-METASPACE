@@ -4,7 +4,7 @@ from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-from annotation_pipeline.utils import ds_dims, get_pixel_indices
+from annotation_pipeline.utils import ds_dims, get_pixel_indices, read_object_with_retry
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
@@ -109,17 +109,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ibm_cos):
 
     def read_ds_segment(ds_segm_key):
-        data = None
-        attempts = 1
-        while data is None:
-            try:
-                data_stream = ibm_cos.get_object(Bucket=ds_bucket, Key=ds_segm_key)['Body']
-                data = msgpack.loads(data_stream.read())
-            except Exception as e:
-                print(e)
-                if attempts >= 5:
-                    raise
-                attempts += 1
+        data = read_object_with_retry(ibm_cos, ds_bucket, ds_segm_key, msgpack.load)
 
         if type(data) == list:
             sp_arr = np.concatenate(data)
@@ -171,7 +161,11 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
     def process_centr_segment(obj, ibm_cos, internal_storage):
         print(f'Reading centroids segment {obj.key}')
         # read database relevant part
-        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
+        try:
+            centr_df = pd.read_msgpack(obj.data_stream)
+        except:
+            centr_df = read_object_with_retry(ibm_cos, obj.bucket, obj.key, pd.read_msgpack)
+
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
