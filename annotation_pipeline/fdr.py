@@ -6,13 +6,17 @@ import msgpack_numpy as msgpack
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
-from annotation_pipeline.utils import append_pywren_stats
+from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry
 
 
 def _get_random_adduct_set(size, adducts, offset):
     r = np.random.RandomState(123)
     idxs = (r.random_integers(0, len(adducts), size) + offset) % len(adducts)
     return np.array(adducts)[idxs]
+
+
+def msgpack_load_text(stream):
+    return msgpack.load(stream, encoding='utf-8')
 
 
 def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
@@ -26,7 +30,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        mols = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=database)['Body'].read())
+        mols = pickle.loads(read_object_with_retry(ibm_cos, bucket, database))
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -41,8 +45,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
                                        Prefix=f'{input_db["formula_to_id_chunks"]}/')
         keys = [obj['Key'] for obj in objs['Contents']]
         for key in keys:
-            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
-            formula_to_id_chunk = msgpack.loads(data_stream.read(), encoding='utf-8')
+            formula_to_id_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack_load_text)
+
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
                     formula_to_id[formula] = formula_to_id_chunk.get(formula)
@@ -88,8 +92,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 def calculate_fdrs(pw, data_bucket, rankings_df):
 
     def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
-        target = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=target_key)['Body'].read())
-        decoy = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=decoy_key)['Body'].read())
+        target = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
+        decoy = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()

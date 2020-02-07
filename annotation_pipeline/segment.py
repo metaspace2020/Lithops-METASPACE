@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import sys
-from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, clean_from_cos
+from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, clean_from_cos, read_object_with_retry
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -142,7 +142,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             keys = [obj['Key'] for obj in objs['Contents']]
 
             def _merge(key):
-                segm_spectra_chunk = msgpack.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+                segm_spectra_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack.load)
                 return segm_spectra_chunk
 
             with ThreadPoolExecutor(max_workers=128) as pool:
@@ -265,8 +265,7 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
             keys = [obj['Key'] for obj in objs['Contents']]
 
             def _merge(key):
-                data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
-                segm_centr_df_chunk = pd.read_msgpack(data_stream._raw_stream)
+                segm_centr_df_chunk = read_object_with_retry(ibm_cos, bucket, key, pd.read_msgpack)
                 return segm_centr_df_chunk
 
             with ThreadPoolExecutor(max_workers=128) as pool:

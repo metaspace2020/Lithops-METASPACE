@@ -97,3 +97,22 @@ def get_pywren_stats(log_path=STATUS_PATH):
     calc_func = lambda row: row[1] * (row[2] / 1024) * row[3] * unit_price_in_dollars
     print('Total PyWren cost:', np.sum(np.apply_along_axis(calc_func, 1, stats)), '$')
     return stats
+
+
+def read_object_with_retry(ibm_cos, bucket, key, stream_reader=None):
+    last_exception = None
+    for attempt in range(1, 4):
+        try:
+            print(f'Reading {key} (attempt {attempt})')
+            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
+            if stream_reader:
+                data = stream_reader(data_stream)
+            else:
+                data = data_stream.read()
+            length = getattr(data_stream, '_amount_read', 'Unknown')
+            print(f'Reading {key} (attempt {attempt}) - Success ({length} bytes)')
+            return data
+        except Exception as ex:
+            print(f'Exception reading {key} (attempt {attempt}): ', ex)
+            last_exception = ex
+    raise last_exception
