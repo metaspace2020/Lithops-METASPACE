@@ -1,8 +1,10 @@
 from cpyMSpec import isotopePattern, InstrumentModel
 from pyMSpec.pyisocalc import pyisocalc
+import cpyMSpec.utils
 import numpy as np
 import logging
 
+assert cpyMSpec.utils.VERSION == '0.3.5', 'Incorrect version of cpyMSpec: ' + cpyMSpec.utils.VERSION
 
 logger = logging.getLogger('engine')
 
