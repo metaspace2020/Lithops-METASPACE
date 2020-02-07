@@ -92,8 +92,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 def calculate_fdrs(pw, data_bucket, rankings_df):
 
     def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
-        target = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=target_key)['Body'].read())
-        decoy = pickle.loads(ibm_cos.get_object(Bucket=data_bucket, Key=decoy_key)['Body'].read())
+        target = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
+        decoy = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()

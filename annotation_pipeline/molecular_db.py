@@ -11,7 +11,7 @@ import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos
+from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos, read_object_with_retry
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
@@ -37,7 +37,7 @@ def build_database(config, input_db):
         print(f'Generating formulas for adduct {adduct}')
 
         def _get_mols(mols_key):
-            return pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=mols_key)['Body'].read())
+            return pickle.loads(read_object_with_retry(ibm_cos, bucket, mols_key))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             mols_list = list(pool.map(_get_mols, databases))
@@ -83,7 +83,7 @@ def build_database(config, input_db):
 
         segm = set()
         for key in keys:
-            segm_formulas_chunk = pickle.loads(ibm_cos.get_object(Bucket=bucket, Key=key)['Body'].read())
+            segm_formulas_chunk = pickle.loads(read_object_with_retry(ibm_cos, bucket, key))
             segm.update(segm_formulas_chunk)
 
         if clean:
@@ -149,8 +149,7 @@ def build_database(config, input_db):
         keys = [f'{formulas_chunks_prefix}/{formulas_chunk}.msgpack' for formulas_chunk in range(start_id, end_id)]
 
         def _get(key):
-            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
-            formula_chunk = pd.read_msgpack(data_stream._raw_stream)
+            formula_chunk = read_object_with_retry(ibm_cos, bucket, key, pd.read_msgpack)
             formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
             return formula_to_id_chunk
 
