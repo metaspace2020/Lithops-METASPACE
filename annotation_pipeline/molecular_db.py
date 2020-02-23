@@ -1,4 +1,3 @@
-from io import BytesIO
 from itertools import repeat
 from pathlib import Path
 from ibm_botocore.client import ClientError
@@ -70,11 +69,11 @@ def build_database(config, input_db):
 
         return segments_n
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(generate_formulas, adducts)
+    pw = pywren.ibm_cf_executor(config=config)
+    memory_capacity_mb = 512
+    futures = pw.map(generate_formulas, adducts, runtime_memory=memory_capacity_mb)
     segments_n = list(set().union(*pw.get_result(futures)))
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
-                        plus_objects=len(adducts) * len(segments_n))
+    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(adducts) * len(segments_n))
 
     def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
@@ -95,10 +94,11 @@ def build_database(config, input_db):
         segm = deduplicate_formulas_segment(segm_i, ibm_cos, clean=False)
         return len(segm)
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(get_formulas_number_per_chunk, segments_n)
+    pw = pywren.ibm_cf_executor(config=config)
+    memory_capacity_mb = 512
+    futures = pw.map(get_formulas_number_per_chunk, segments_n, runtime_memory=memory_capacity_mb)
     formulas_nums = pw.get_result(futures)
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=memory_capacity_mb)
 
     def store_formulas_segment(segm_i, ibm_cos):
         segm = deduplicate_formulas_segment(segm_i, ibm_cos)
@@ -128,10 +128,11 @@ def build_database(config, input_db):
 
         return [len(segm) for segm in segm_list]
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(store_formulas_segment, segments_n)
+    pw = pywren.ibm_cf_executor(config=config)
+    memory_capacity_mb = 512
+    futures = pw.map(store_formulas_segment, segments_n, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
+    append_pywren_stats(futures, memory=memory_capacity_mb,
                         plus_objects=N_FORMULAS_SEGMENTS, minus_objects=len(adducts) * len(segments_n))
 
     num_formulas = sum(formulas_nums)
@@ -164,10 +165,11 @@ def build_database(config, input_db):
                            Key=f'{formula_to_id_chunks_prefix}/{ch_i}.msgpack',
                            Body=msgpack.dumps(formula_to_id))
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID))
+    pw = pywren.ibm_cf_executor(config=config)
+    memory_capacity_mb = 1024
+    futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID), runtime_memory=memory_capacity_mb)
     pw.get_result(futures)
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'], plus_objects=N_FORMULA_TO_ID)
+    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=N_FORMULA_TO_ID)
     logger.info(f'Built {len(futures)} formula_to_id dictionaries chunks')
 
     return num_formulas, n_formulas_chunks
@@ -211,11 +213,11 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
         'isocalc_sigma': float(f"{isocalc_sigma:f}") # Rounding to match production implementation
     })
 
-    pw = pywren.ibm_cf_executor(config=config, runtime_memory=2048)
-    futures = pw.map(calculate_peaks_chunk, f'{bucket}/{formulas_chunks_prefix}/')
+    pw = pywren.ibm_cf_executor(config=config)
+    memory_capacity_mb = 2048
+    futures = pw.map(calculate_peaks_chunk, f'{bucket}/{formulas_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     centroids_chunks_n = pw.get_result(futures)
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'],
-                        plus_objects=len(futures))
+    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(futures))
 
     num_centroids = sum(centroids_chunks_n)
     n_centroids_chunks = len(centroids_chunks_n)
