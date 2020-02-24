@@ -10,7 +10,8 @@ import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, clean_from_cos, read_object_with_retry
+from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, list_keys, clean_from_cos,\
+    read_object_with_retry
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
@@ -77,8 +78,7 @@ def build_database(config, input_db):
 
     def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
-        objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{formulas_chunks_prefix}/chunk/{segm_i}/')
-        keys = [obj['Key'] for obj in objs['Contents']] if 'Contents' in objs else []
+        keys = list_keys(bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
 
         segm = set()
         for key in keys:

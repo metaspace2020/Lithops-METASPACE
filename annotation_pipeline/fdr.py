@@ -6,7 +6,7 @@ import msgpack_numpy as msgpack
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
-from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry
+from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry, list_keys
 
 
 def _get_random_adduct_set(size, adducts, offset):
@@ -41,9 +41,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
         formula_to_id = {}
-        objs = ibm_cos.list_objects_v2(Bucket=bucket,
-                                       Prefix=f'{input_db["formula_to_id_chunks"]}/')
-        keys = [obj['Key'] for obj in objs['Contents']]
+        keys = list_keys(bucket, f'{input_db["formula_to_id_chunks"]}/', ibm_cos)
         for key in keys:
             formula_to_id_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack_load_text)
 
@@ -79,7 +77,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
-    futures = pw.map(build_ranking, ranking_jobs)
+    futures = pw.map(build_ranking, ranking_jobs, runtime_memory=1024)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
     append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'], plus_objects=len(futures))
 
@@ -129,7 +127,7 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
         for i, target_row in target_rows.iterrows():
             ranking_jobs.append([data_bucket, target_row, decoy_rows.key.tolist()])
 
-    futures = pw.map(merge_rankings, ranking_jobs)
+    futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=128)
     results = pw.get_result(futures)
     append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'])
 

@@ -35,16 +35,34 @@ def upload_to_cos(cos_client, src, target_bucket, target_key):
     logger.info('Copy completed for {}/{}'.format(target_bucket, target_key))
 
 
+def list_keys(bucket, prefix, cos_client):
+    paginator = cos_client.get_paginator('list_objects_v2')
+    page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
+
+    key_list = []
+    for page in page_iterator:
+        if 'Contents' in page:
+            for item in page['Contents']:
+                key_list.append(item['Key'])
+
+    logger.info(f'Listed {len(key_list)} objects from {prefix}')
+    return key_list
+
+
 def clean_from_cos(config, bucket, prefix, cos_client=None):
     if not cos_client:
         cos_client = get_ibm_cos_client(config)
+
     objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    removed_keys_n = 0
     while 'Contents' in objs:
         keys = [obj['Key'] for obj in objs['Contents']]
         formatted_keys = {'Objects': [{'Key': key} for key in keys]}
         cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
-        logger.info(f'Removed {objs["KeyCount"]} objects from {prefix}')
         objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+        removed_keys_n += objs["KeyCount"]
+
+    logger.info(f'Removed {removed_keys_n} objects from {prefix}')
 
 
 def ds_imzml_path(ds_data_path):
