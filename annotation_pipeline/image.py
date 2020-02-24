@@ -1,3 +1,4 @@
+import pickle
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
@@ -48,7 +49,7 @@ class ImagesManager:
     def save_images(self):
         if self.formula_images:
             print(f'Saving {len(self.formula_images)} images')
-            cloud_obj = self._internal_storage.put_object(self.formula_images, bucket=self._bucket)
+            cloud_obj = self._internal_storage.put_object(pickle.dumps(self.formula_images), bucket=self._bucket)
             self.cloud_objs.append(cloud_obj)
             self._partition += 1
         else:
