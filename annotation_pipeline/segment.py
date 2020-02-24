@@ -1,7 +1,8 @@
 import numpy as np
 import pandas as pd
 import sys
-from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, clean_from_cos, read_object_with_retry
+from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, list_keys,\
+    clean_from_cos, read_object_with_retry
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -99,7 +100,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
     return ds_segments
 
 
-def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segments_bounds):
+def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segments_bounds, ds_segm_size_mb):
     ds_segm_n = len(ds_segments_bounds)
 
     # extend boundaries of the first and last segments
@@ -109,7 +110,9 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
     ds_segments_bounds[-1, 1] = MAX_MZ_VALUE
 
     # define first level segmentation and then segment each one into desired number
-    first_level_segm_n = min(32, len(ds_segments_bounds))
+    first_level_segm_size_mb = 512
+    first_level_segm_n = (len(ds_segments_bounds) * ds_segm_size_mb) // first_level_segm_size_mb
+    first_level_segm_n = min(first_level_segm_n, len(ds_segments_bounds))
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
 
     def segment_spectra_chunk(obj, id, ibm_cos):
@@ -128,48 +131,46 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
 
-    first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/')
+    memory_safe_mb = 1536
+    memory_capacity_mb = first_level_segm_size_mb + memory_safe_mb
+    first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     pw.get_result(first_futures)
     if not isinstance(first_futures, list): first_futures = [first_futures]
-    append_pywren_stats(first_futures, memory=pw.config['pywren']['runtime_memory'],
-                        plus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(first_futures, memory=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
 
     def merge_spectra_chunk_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} spectra chunks')
 
-        objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{ds_segments_prefix}/chunk/{segm_i}/')
-        if 'Contents' in objs:
-            keys = [obj['Key'] for obj in objs['Contents']]
+        keys = list_keys(bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
 
-            def _merge(key):
-                segm_spectra_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack.load)
-                return segm_spectra_chunk
+        def _merge(key):
+            segm_spectra_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack.load)
+            return segm_spectra_chunk
 
-            with ThreadPoolExecutor(max_workers=128) as pool:
-                segm = np.concatenate(list(pool.map(_merge, keys)))
-                segm = segm[segm[:, 1].argsort()]
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            segm = np.concatenate(list(pool.map(_merge, keys)))
+            segm = segm[segm[:, 1].argsort()]
 
-            clean_from_cos(None, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
-            bounds_list = ds_segments_bounds[segm_i]
+        clean_from_cos(None, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
+        bounds_list = ds_segments_bounds[segm_i]
 
-            def _second_level_segment_upload(segm_j):
-                l, r = bounds_list[segm_j]
-                segm_start, segm_end = np.searchsorted(segm[:, 1], (l, r))  # mz expected to be in column 1
-                sub_segm = segm[segm_start:segm_end]
-                base_id = sum([len(bounds) for bounds in ds_segments_bounds[:segm_i]])
-                id = base_id + segm_j
-                print(f'Storing dataset segment {id}')
-                ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{ds_segments_prefix}/{id}.msgpack',
-                                   Body=msgpack.dumps(sub_segm))
+        def _second_level_segment_upload(segm_j):
+            l, r = bounds_list[segm_j]
+            segm_start, segm_end = np.searchsorted(segm[:, 1], (l, r))  # mz expected to be in column 1
+            sub_segm = segm[segm_start:segm_end]
+            base_id = sum([len(bounds) for bounds in ds_segments_bounds[:segm_i]])
+            id = base_id + segm_j
+            print(f'Storing dataset segment {id}')
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{ds_segments_prefix}/{id}.msgpack',
+                               Body=msgpack.dumps(sub_segm))
 
-            with ThreadPoolExecutor(max_workers=128) as pool:
-                pool.map(_second_level_segment_upload, range(len(bounds_list)))
+        map(_second_level_segment_upload, range(len(bounds_list)))
 
-    second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)))
+    # same memory capacity
+    second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)), runtime_memory=memory_capacity_mb)
     pw.get_result(second_futures)
-    append_pywren_stats(second_futures, memory=pw.config['pywren']['runtime_memory'],
-                        plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(second_futures, memory=memory_capacity_mb, plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
 
     return ds_segm_n
 
@@ -263,32 +264,30 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
     def merge_centr_df_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} clipped centroids chunks')
 
-        objs = ibm_cos.list_objects_v2(Bucket=bucket, Prefix=f'{centr_segm_prefix}/chunk/{segm_i}/')
-        if 'Contents' in objs:
-            keys = [obj['Key'] for obj in objs['Contents']]
+        keys = list_keys(bucket, f'{centr_segm_prefix}/chunk/{segm_i}/', ibm_cos)
 
-            def _merge(key):
-                segm_centr_df_chunk = read_object_with_retry(ibm_cos, bucket, key, pd.read_msgpack)
-                return segm_centr_df_chunk
+        def _merge(key):
+            segm_centr_df_chunk = read_object_with_retry(ibm_cos, bucket, key, pd.read_msgpack)
+            return segm_centr_df_chunk
 
-            with ThreadPoolExecutor(max_workers=128) as pool:
-                segm = pd.concat(list(pool.map(_merge, keys)))
-                del segm['segm_i']
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            segm = pd.concat(list(pool.map(_merge, keys)))
+            del segm['segm_i']
 
-            clean_from_cos(None, bucket, f'{centr_segm_prefix}/chunk/{segm_i}/', ibm_cos)
-            centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[segm_i])
+        clean_from_cos(None, bucket, f'{centr_segm_prefix}/chunk/{segm_i}/', ibm_cos)
+        centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[segm_i])
 
-            def _second_level_upload(args):
-                segm_j, df = args
-                base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:segm_i]])
-                id = base_id + segm_j
-                print(f'Storing centroids segment {id}')
-                ibm_cos.put_object(Bucket=bucket,
-                                   Key=f'{centr_segm_prefix}/{id}.msgpack',
-                                   Body=df.to_msgpack())
+        def _second_level_upload(args):
+            segm_j, df = args
+            base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:segm_i]])
+            id = base_id + segm_j
+            print(f'Storing centroids segment {id}')
+            ibm_cos.put_object(Bucket=bucket,
+                               Key=f'{centr_segm_prefix}/{id}.msgpack',
+                               Body=df.to_msgpack())
 
-            with ThreadPoolExecutor(max_workers=128) as pool:
-                pool.map(_second_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
+        with ThreadPoolExecutor(max_workers=128) as pool:
+            pool.map(_second_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
 
     memory_capacity_mb = 1024
     second_futures = pw.map(merge_centr_df_segments, range(len(centr_segm_lower_bounds)), runtime_memory=memory_capacity_mb)
