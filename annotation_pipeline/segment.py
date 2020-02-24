@@ -110,9 +110,9 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
     ds_segments_bounds[-1, 1] = MAX_MZ_VALUE
 
     # define first level segmentation and then segment each one into desired number
-    first_level_segm_size_mb = 512
+    first_level_segm_size_mb = 256
     first_level_segm_n = (len(ds_segments_bounds) * ds_segm_size_mb) // first_level_segm_size_mb
-    first_level_segm_n = min(first_level_segm_n, len(ds_segments_bounds))
+    first_level_segm_n = max(first_level_segm_n, 1)
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
 
     def segment_spectra_chunk(obj, id, ibm_cos):
@@ -131,7 +131,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
         with ThreadPoolExecutor(max_workers=128) as pool:
             pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
 
-    memory_safe_mb = 1536
+    memory_safe_mb = 1792
     memory_capacity_mb = first_level_segm_size_mb + memory_safe_mb
     first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     pw.get_result(first_futures)
@@ -154,7 +154,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
         clean_from_cos(None, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
         bounds_list = ds_segments_bounds[segm_i]
 
-        def _second_level_segment_upload(segm_j):
+        for segm_j in range(len(bounds_list)):
             l, r = bounds_list[segm_j]
             segm_start, segm_end = np.searchsorted(segm[:, 1], (l, r))  # mz expected to be in column 1
             sub_segm = segm[segm_start:segm_end]
@@ -164,8 +164,6 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             ibm_cos.put_object(Bucket=bucket,
                                Key=f'{ds_segments_prefix}/{id}.msgpack',
                                Body=msgpack.dumps(sub_segm))
-
-        map(_second_level_segment_upload, range(len(bounds_list)))
 
     # same memory capacity
     second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)), runtime_memory=memory_capacity_mb)
