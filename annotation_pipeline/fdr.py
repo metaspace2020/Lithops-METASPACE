@@ -77,9 +77,10 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
-    futures = pw.map(build_ranking, ranking_jobs, runtime_memory=1024)
+    memory_capacity_mb = 1024
+    futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'], plus_objects=len(futures))
+    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), key=ranking_keys)
@@ -91,7 +92,7 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
 
     def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
         target = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
-        decoy = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
+        decoy = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, decoy_key))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()
@@ -127,8 +128,9 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
         for i, target_row in target_rows.iterrows():
             ranking_jobs.append([data_bucket, target_row, decoy_rows.key.tolist()])
 
-    futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=128)
+    memory_capacity_mb = 256
+    futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory=pw.config['pywren']['runtime_memory'])
+    append_pywren_stats(futures, memory=memory_capacity_mb)
 
     return pd.concat(results)
