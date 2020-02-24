@@ -53,10 +53,12 @@ class Pipeline(object):
 
     def segment_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
-        self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb, sample_ratio=0.05)
+        sample_sp_n = 1000
+        self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb,
+                                                     sample_ratio=sample_sp_n / self.sp_n)
         self.ds_segm_n = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
                                          self.input_data["ds_chunks"], self.input_data["ds_segments"],
-                                         self.ds_segments_bounds)
+                                         self.ds_segments_bounds, self.ds_segm_size_mb)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
