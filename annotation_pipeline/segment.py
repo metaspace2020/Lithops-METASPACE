@@ -110,7 +110,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
     ds_segments_bounds[-1, 1] = MAX_MZ_VALUE
 
     # define first level segmentation and then segment each one into desired number
-    first_level_segm_size_mb = 256
+    first_level_segm_size_mb = 1536
     first_level_segm_n = (len(ds_segments_bounds) * ds_segm_size_mb) // first_level_segm_size_mb
     first_level_segm_n = max(first_level_segm_n, 1)
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
@@ -127,29 +127,35 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             ibm_cos.put_object(Bucket=bucket,
                                Key=f'{ds_segments_prefix}/chunk/{segm_i}/{id}.msgpack',
                                Body=msgpack.dumps(segm))
+            return len(segm)
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            pool.map(_first_level_segment_upload, range(len(ds_segments_bounds)))
+            segms_len = list(pool.map(_first_level_segment_upload, range(len(ds_segments_bounds))))
 
-    memory_safe_mb = 1792
+        return segms_len
+
+    memory_safe_mb = 512
     memory_capacity_mb = first_level_segm_size_mb + memory_safe_mb
     first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/', runtime_memory=memory_capacity_mb)
-    pw.get_result(first_futures)
+    segms_len = list(np.sum(pw.get_result(first_futures), axis=0))
     if not isinstance(first_futures, list): first_futures = [first_futures]
     append_pywren_stats(first_futures, memory=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
 
-    def merge_spectra_chunk_segments(segm_i, ibm_cos):
+    def merge_spectra_chunk_segments(segm_len, id, ibm_cos):
+        segm_i = id
         print(f'Merging segment {segm_i} spectra chunks')
 
         keys = list_keys(bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
-
-        def _merge(key):
+        segm = np.zeros((segm_len, 3), dtype=np.float32)
+        row_i = 0
+        for key in keys:
             segm_spectra_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack.load)
-            return segm_spectra_chunk
+            for row in segm_spectra_chunk:
+                segm[row_i] = row
+                row_i += 1
 
-        with ThreadPoolExecutor(max_workers=128) as pool:
-            segm = np.concatenate(list(pool.map(_merge, keys)))
-            segm = segm[segm[:, 1].argsort()]
+        # sort by mz value (column 1)
+        segm.view('float32,float32,float32').sort(order=['f1'], axis=0)
 
         clean_from_cos(None, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
         bounds_list = ds_segments_bounds[segm_i]
@@ -159,14 +165,14 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             segm_start, segm_end = np.searchsorted(segm[:, 1], (l, r))  # mz expected to be in column 1
             sub_segm = segm[segm_start:segm_end]
             base_id = sum([len(bounds) for bounds in ds_segments_bounds[:segm_i]])
-            id = base_id + segm_j
-            print(f'Storing dataset segment {id}')
+            segm_i = base_id + segm_j
+            print(f'Storing dataset segment {segm_i}')
             ibm_cos.put_object(Bucket=bucket,
-                               Key=f'{ds_segments_prefix}/{id}.msgpack',
+                               Key=f'{ds_segments_prefix}/{segm_i}.msgpack',
                                Body=msgpack.dumps(sub_segm))
 
     # same memory capacity
-    second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)), runtime_memory=memory_capacity_mb)
+    second_futures = pw.map(merge_spectra_chunk_segments, segms_len, runtime_memory=memory_capacity_mb)
     pw.get_result(second_futures)
     append_pywren_stats(second_futures, memory=memory_capacity_mb, plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
 
