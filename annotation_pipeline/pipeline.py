@@ -56,9 +56,9 @@ class Pipeline(object):
         sample_sp_n = 1000
         self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb,
                                                      sample_ratio=sample_sp_n / self.sp_n)
-        self.ds_segm_n = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
-                                         self.input_data["ds_chunks"], self.input_data["ds_segments"],
-                                         self.ds_segments_bounds, self.ds_segm_size_mb)
+        self.ds_segm_n, self.ds_segms_len = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
+                                            self.input_data["ds_chunks"], self.input_data["ds_segments"],
+                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_parser.mzPrecision)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
@@ -86,8 +86,9 @@ class Pipeline(object):
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
                                                        self.input_data["ds_segments"],
-                                                       self.ds_segments_bounds, self.coordinates, self.image_gen_config,
-                                                       memory_capacity_mb, self.ds_segm_size_mb)
+                                                       self.ds_segments_bounds, self.ds_segms_len, self.coordinates,
+                                                       self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
+                                                       self.imzml_parser.mzPrecision)
 
         futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/',
                                            runtime_memory=memory_capacity_mb)
