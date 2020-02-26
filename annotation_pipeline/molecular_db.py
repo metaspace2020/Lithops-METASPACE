@@ -141,7 +141,9 @@ def build_database(config, input_db):
 
     formula_to_id_chunks_prefix = input_db["formula_to_id_chunks"]
     clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
-    N_FORMULA_TO_ID = 8
+    formulas_bytes = 200 * num_formulas
+    formula_to_id_chunk_mb = 512
+    N_FORMULA_TO_ID = formulas_bytes // (formula_to_id_chunk_mb * 1024 ** 2)
 
     def store_formula_to_id_chunk(ch_i, ibm_cos):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
@@ -166,7 +168,8 @@ def build_database(config, input_db):
                            Body=msgpack.dumps(formula_to_id))
 
     pw = pywren.ibm_cf_executor(config=config)
-    memory_capacity_mb = 1024
+    safe_mb = 512
+    memory_capacity_mb = formula_to_id_chunk_mb * 2 + safe_mb
     futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID), runtime_memory=memory_capacity_mb)
     pw.get_result(futures)
     append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=N_FORMULA_TO_ID)

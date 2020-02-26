@@ -77,7 +77,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
-    memory_capacity_mb = 1024
+    memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
     append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(futures))
