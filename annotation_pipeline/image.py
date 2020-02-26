@@ -11,7 +11,7 @@ from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
 
 class ImagesManager:
-    min_memory_allowed = 128 * 1024 ** 2  # 128MB
+    min_memory_allowed = 64 * 1024 ** 2  # 64MB
 
     def __init__(self, internal_storage, bucket, max_formula_images_size):
         if max_formula_images_size < self.__class__.min_memory_allowed:
@@ -195,7 +195,7 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
                                            centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
         safe_mb = 1024
-        max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 2
+        max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
         images_manager = ImagesManager(internal_storage, output_bucket, max_formula_images_mb * 1024 ** 2)
         formula_image_metrics(formula_images_it, compute_metrics, images_manager)
