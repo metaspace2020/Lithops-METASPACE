@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import numpy as np
 import ibm_boto3
+import ibm_botocore
 import pandas as pd
 import csv
 
@@ -22,10 +23,15 @@ STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
 
 
 def get_ibm_cos_client(config):
+    client_config = ibm_botocore.client.Config(connect_timeout=1,
+                                               read_timeout=3,
+                                               retries={'max_attempts': 5})
+
     return ibm_boto3.client(service_name='s3',
                             aws_access_key_id=config['ibm_cos']['access_key'],
                             aws_secret_access_key=config['ibm_cos']['secret_key'],
-                            endpoint_url=config['ibm_cos']['endpoint'])
+                            endpoint_url=config['ibm_cos']['endpoint'],
+                            config=client_config)
 
 
 def upload_to_cos(cos_client, src, target_bucket, target_key):
