@@ -151,7 +151,10 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
             segm = list(pool.map(_merge, keys))
 
         segm = np.concatenate(segm)
-        segm.view(f'{segm_dtype},{segm_dtype},{segm_dtype}').sort(order=['f1'], axis=0)
+
+        # Alternative in-place sorting (slower) :
+        # segm.view(f'{segm_dtype},{segm_dtype},{segm_dtype}').sort(order=['f1'], axis=0)
+        segm = segm[segm[:, 1].argsort()]
 
         clean_from_cos(None, bucket, f'{ds_segments_prefix}/chunk/{segm_i}/', ibm_cos)
         bounds_list = ds_segments_bounds[segm_i]

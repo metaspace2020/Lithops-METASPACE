@@ -137,14 +137,16 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_se
             sub_sp_arr = read_ds_segment(key)
             sp_arr[row_i:row_i + len(sub_sp_arr)] = sub_sp_arr
             row_i += len(sub_sp_arr)
+        sp_arr.view(f'{ds_segm_dtype},{ds_segm_dtype},{ds_segm_dtype}').sort(order=['f1'],
+                                                                             axis=0)  # assume mz in column 1
 
     else:
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
         sp_arr = np.concatenate(sp_arr)
+        sp_arr = sp_arr[sp_arr[:, 1].argsort()]  # assume mz in column 1
 
-    sp_arr.view(f'{ds_segm_dtype},{ds_segm_dtype},{ds_segm_dtype}').sort(order=['f1'], axis=0)  # assume mz in column 1
     return sp_arr
 
 
