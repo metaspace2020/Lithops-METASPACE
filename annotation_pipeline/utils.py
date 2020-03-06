@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 import numpy as np
 import ibm_boto3
+import ibm_botocore
 import pandas as pd
 import csv
 
@@ -22,10 +23,15 @@ STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
 
 
 def get_ibm_cos_client(config):
+    client_config = ibm_botocore.client.Config(connect_timeout=1,
+                                               read_timeout=3,
+                                               retries={'max_attempts': 5})
+
     return ibm_boto3.client(service_name='s3',
                             aws_access_key_id=config['ibm_cos']['access_key'],
                             aws_secret_access_key=config['ibm_cos']['secret_key'],
-                            endpoint_url=config['ibm_cos']['endpoint'])
+                            endpoint_url=config['ibm_cos']['endpoint'],
+                            config=client_config)
 
 
 def upload_to_cos(cos_client, src, target_bucket, target_key):
@@ -35,16 +41,34 @@ def upload_to_cos(cos_client, src, target_bucket, target_key):
     logger.info('Copy completed for {}/{}'.format(target_bucket, target_key))
 
 
+def list_keys(bucket, prefix, cos_client):
+    paginator = cos_client.get_paginator('list_objects_v2')
+    page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
+
+    key_list = []
+    for page in page_iterator:
+        if 'Contents' in page:
+            for item in page['Contents']:
+                key_list.append(item['Key'])
+
+    logger.info(f'Listed {len(key_list)} objects from {prefix}')
+    return key_list
+
+
 def clean_from_cos(config, bucket, prefix, cos_client=None):
     if not cos_client:
         cos_client = get_ibm_cos_client(config)
+
     objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+    removed_keys_n = 0
     while 'Contents' in objs:
         keys = [obj['Key'] for obj in objs['Contents']]
         formatted_keys = {'Objects': [{'Key': key} for key in keys]}
         cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
-        logger.info(f'Removed {objs["KeyCount"]} objects from {prefix}')
+        removed_keys_n += objs["KeyCount"]
         objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+
+    logger.info(f'Removed {removed_keys_n} objects from {prefix}')
 
 
 def ds_imzml_path(ds_data_path):
