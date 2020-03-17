@@ -1,4 +1,5 @@
 import pickle
+from itertools import chain
 
 import pywren_ibm_cloud as pywren
 
@@ -94,7 +95,7 @@ class Pipeline(object):
                                            runtime_memory=memory_capacity_mb)
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
         self.formula_metrics_df = pd.concat(formula_metrics_list)
-        self.images_cloud_objs = np.concatenate(images_cloud_objs)
+        self.images_cloud_objs = list(chain(*images_cloud_objs))
         append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
 
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
@@ -127,7 +128,7 @@ class Pipeline(object):
                     images[k] = v
             return images
 
-        futures = self.pywren_executor.map(get_target_images, [(o, ) for o in self.images_cloud_objs], runtime_memory=1024)
+        futures = self.pywren_executor.map(get_target_images, self.images_cloud_objs, runtime_memory=1024)
         all_images = {}
         for image_set in self.pywren_executor.get_result(futures):
             all_images.update(image_set)
