@@ -173,7 +173,7 @@ def build_database(config, input_db):
     futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID), runtime_memory=memory_capacity_mb)
     pw.get_result(futures)
     append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=N_FORMULA_TO_ID)
-    logger.info(f'Built {len(futures)} formula_to_id dictionaries chunks')
+    logger.info(f'Built {N_FORMULA_TO_ID} formula_to_id dictionaries chunks')
 
     return num_formulas, n_formulas_chunks
 
