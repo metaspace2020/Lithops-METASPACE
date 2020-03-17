@@ -1,6 +1,6 @@
+import pickle
+
 import pywren_ibm_cloud as pywren
-from pywren_ibm_cloud.config import extract_storage_config
-from pywren_ibm_cloud.storage import InternalStorage
 
 from pyimzml.ImzMLParser import ImzMLParser
 import pandas as pd
@@ -82,7 +82,7 @@ class Pipeline(object):
         logger.info('Annotating...')
         clean_from_cos(self.config, self.config["storage"]["output_bucket"], self.output["formula_images"])
 
-        memory_capacity_mb = 2048
+        memory_capacity_mb = 2048  # TODO: Detect when this isn't enough and bump it up to 4096
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
                                                        self.input_data["ds_segments"],
@@ -116,14 +116,23 @@ class Pipeline(object):
         return results_df
 
     def get_images(self):
-        images = {}
-        storage_config = extract_storage_config(self.config)
-        internal_storage = InternalStorage(storage_config)
-        for cloud_obj in self.images_cloud_objs:
-            segm_images = internal_storage.get_object(cloud_obj)
-            images.update(segm_images)
+        # Only download interesting images, to prevent running out of memory
+        targets = set(self.results_df.index[self.results_df.fdr <= 0.5])
 
-        return dict((formula_i, images[formula_i]) for formula_i in self.results_df.index)
+        def get_target_images(internal_storage, images_obj):
+            images = {}
+            segm_images = pickle.loads(internal_storage.get_object(images_obj))
+            for k, v in segm_images.items():
+                if k in targets:
+                    images[k] = v
+            return images
+
+        futures = self.pywren_executor.map(get_target_images, [(o, ) for o in self.images_cloud_objs], runtime_memory=1024)
+        all_images = {}
+        for image_set in self.pywren_executor.get_result(futures):
+            all_images.update(image_set)
+
+        return all_images
 
     def check_results(self):
         results_df = self.get_results()
