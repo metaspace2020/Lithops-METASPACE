@@ -143,7 +143,7 @@ def build_database(config, input_db):
     clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
     formulas_bytes = 200 * num_formulas
     formula_to_id_chunk_mb = 512
-    N_FORMULA_TO_ID = formulas_bytes // (formula_to_id_chunk_mb * 1024 ** 2)
+    N_FORMULA_TO_ID = int(math.ceil(formulas_bytes / (formula_to_id_chunk_mb * 1024 ** 2)))
 
     def store_formula_to_id_chunk(ch_i, ibm_cos):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
