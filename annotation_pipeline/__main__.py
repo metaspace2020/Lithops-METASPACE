@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from annotation_pipeline.utils import get_ibm_cos_client
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.molecular_db import dump_mol_db, build_database, calculate_centroids
+from annotation_pipeline.molecular_db import build_database, calculate_centroids, upload_mol_dbs_from_dir
 
 logger = logging.getLogger(name='annotation_pipeline')
 
@@ -39,10 +39,7 @@ def generate_centroids(args, config):
     input_data = input_config['dataset']
 
     databases_path = Path(Path(input_db['databases'][0]).parent)
-    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db1.pickle', 22)  # HMDB-v4
-    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db2.pickle', 19)  # ChEBI-2018-01
-    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db3.pickle', 24)  # LipidMaps-2017-12-12
-    dump_mol_db(config, config['storage']['db_bucket'], f'{databases_path}/mol_db4.pickle', 26)  # SwissLipids-2018-02-02
+    upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], 'metabolomics/db', f'{databases_path}metabolomics/db')
 
     build_database(config, input_db)
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results

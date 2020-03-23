@@ -143,7 +143,7 @@ def build_database(config, input_db):
     clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
     formulas_bytes = 200 * num_formulas
     formula_to_id_chunk_mb = 512
-    N_FORMULA_TO_ID = formulas_bytes // (formula_to_id_chunk_mb * 1024 ** 2)
+    N_FORMULA_TO_ID = int(math.ceil(formulas_bytes / (formula_to_id_chunk_mb * 1024 ** 2)))
 
     def store_formula_to_id_chunk(ch_i, ibm_cos):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
@@ -173,7 +173,7 @@ def build_database(config, input_db):
     futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID), runtime_memory=memory_capacity_mb)
     pw.get_result(futures)
     append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=N_FORMULA_TO_ID)
-    logger.info(f'Built {len(futures)} formula_to_id dictionaries chunks')
+    logger.info(f'Built {N_FORMULA_TO_ID} formula_to_id dictionaries chunks')
 
     return num_formulas, n_formulas_chunks
 
@@ -226,21 +226,6 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
     n_centroids_chunks = len(centroids_chunks_n)
     logger.info(f'Calculated {num_centroids} centroids in {n_centroids_chunks} chunks')
     return num_centroids, n_centroids_chunks
-
-
-def dump_mol_db(config, bucket, key, db_id, force=False):
-    import requests
-    ibm_cos = get_ibm_cos_client(config)
-    try:
-        ibm_cos.head_object(Bucket=bucket, Key=key)
-        should_dump = force
-    except ClientError:
-        should_dump = True
-
-    if should_dump:
-        mols = requests.get(f'https://metaspace2020.eu/mol_db/v1/databases/{db_id}/molecules?limit=999999&fields=sf').json()['data']
-        mol_sfs = sorted(set(mol['sf'] for mol in mols))
-        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
 
 
 def upload_mol_db_from_file(config, bucket, key, path, force=False):
