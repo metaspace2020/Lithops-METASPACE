@@ -228,21 +228,6 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
     return num_centroids, n_centroids_chunks
 
 
-def dump_mol_db(config, bucket, key, db_id, force=False):
-    import requests
-    ibm_cos = get_ibm_cos_client(config)
-    try:
-        ibm_cos.head_object(Bucket=bucket, Key=key)
-        should_dump = force
-    except ClientError:
-        should_dump = True
-
-    if should_dump:
-        mols = requests.get(f'https://metaspace2020.eu/mol_db/v1/databases/{db_id}/molecules?limit=999999&fields=sf').json()['data']
-        mol_sfs = sorted(set(mol['sf'] for mol in mols))
-        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
-
-
 def upload_mol_db_from_file(config, bucket, key, path, force=False):
     ibm_cos = get_ibm_cos_client(config)
     try:
