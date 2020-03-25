@@ -39,7 +39,7 @@ def generate_centroids(args, config):
     input_data = input_config['dataset']
 
     databases_path = Path(Path(input_db['databases'][0]).parent)
-    upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], 'metabolomics/db', f'{databases_path}metabolomics/db')
+    upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], databases_path, databases_path)
 
     build_database(config, input_db)
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
