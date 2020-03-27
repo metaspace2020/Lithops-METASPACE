@@ -21,7 +21,8 @@ setup(name='pywren-annotation-pipeline',
           "pyMSpec==0.1.2",
           "cpyMSpec==0.3.5",
           "pyimzML==1.3.0",
-          "requests",
+          "requests==2.22.0",
+          "msgpack==0.6.2",
           "msgpack-numpy==0.4.4.3",
           "metaspace2020", # Only needed for experiment notebooks
           "psutil", # Only needed for experiment notebooks
