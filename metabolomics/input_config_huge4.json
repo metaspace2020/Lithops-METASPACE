@@ -1,7 +1,9 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/microbial_interaction",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/microbial_interaction/microbial_interaction.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/microbial_interaction/microbial_interaction.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/microbial_interaction",
+    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/microbial_interaction.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,

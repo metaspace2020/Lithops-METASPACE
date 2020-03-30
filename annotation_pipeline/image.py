@@ -172,9 +172,10 @@ def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
 
 
 def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments_bounds, ds_segms_len,
-                           coordinates, image_gen_config, pw_mem_mb, ds_segm_size_mb, ds_segm_dtype):
-    sample_area_mask = make_sample_area_mask(coordinates)
-    nrows, ncols = ds_dims(coordinates)
+                           imzml_reader, image_gen_config, pw_mem_mb, ds_segm_size_mb):
+    ds_segm_dtype = imzml_reader.mzPrecision
+    sample_area_mask = make_sample_area_mask(imzml_reader.coordinates)
+    nrows, ncols = ds_dims(imzml_reader.coordinates)
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 

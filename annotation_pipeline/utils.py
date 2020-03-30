@@ -1,4 +1,5 @@
 import logging
+from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -6,6 +7,8 @@ import ibm_boto3
 import ibm_botocore
 import pandas as pd
 import csv
+
+import requests
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
@@ -77,14 +80,14 @@ def ds_imzml_path(ds_data_path):
 
 
 def ds_dims(coordinates):
-    min_x, min_y = np.amin(coordinates, axis=0)
-    max_x, max_y = np.amax(coordinates, axis=0)
+    min_x, min_y = np.amin(coordinates, axis=0)[:2]
+    max_x, max_y = np.amax(coordinates, axis=0)[:2]
     nrows, ncols = max_y - min_y + 1, max_x - min_x + 1
     return nrows, ncols
 
 
 def get_pixel_indices(coordinates):
-    _coord = np.array(coordinates)
+    _coord = np.array(coordinates)[:, :2]
     _coord = np.around(_coord, 5)
     _coord -= np.amin(_coord, axis=0)
 
@@ -140,3 +143,37 @@ def read_object_with_retry(ibm_cos, bucket, key, stream_reader=None):
             print(f'Exception reading {key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
+
+
+def read_ranges_from_url(url, ranges):
+    MAX_JUMP = 2 ** 16 # Largest gap between ranges before a new request should be made
+
+    request_ranges = []
+    tasks = []
+    range_start = None
+    range_end = None
+    for input_i in np.argsort(np.array(ranges)[:, 0]):
+        lo, hi = ranges[input_i]
+        if range_start is None:
+            range_start, range_end = lo, hi
+        elif lo - range_end <= MAX_JUMP:
+            range_end = max(range_end, hi)
+        else:
+            request_ranges.append((range_start, range_end))
+            range_start, range_end = lo, hi
+
+        tasks.append((input_i, len(request_ranges), lo - range_start, hi - range_start))
+
+    if range_start is not None:
+        request_ranges.append((range_start, range_end))
+
+    print(f'Reading {len(request_ranges)} ranges: {request_ranges}')
+
+    with ThreadPoolExecutor() as ex:
+        def get_range(lo_hi):
+            lo, hi = lo_hi
+            return requests.get(url, headers={'Range': f'bytes={lo}-{hi}'}).content
+        request_results = list(ex.map(get_range, request_ranges))
+
+    return [request_results[request_i][request_lo:request_hi]
+            for input_i, request_i, request_lo, request_hi in sorted(tasks)]

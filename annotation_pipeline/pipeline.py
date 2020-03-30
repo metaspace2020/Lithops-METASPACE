@@ -3,17 +3,14 @@ from itertools import chain
 
 import pywren_ibm_cloud as pywren
 
-from pyimzml.ImzMLParser import ImzMLParser
 import pandas as pd
-import numpy as np
 
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
-    clip_centr_df, define_centr_segments
-from annotation_pipeline.utils import ds_imzml_path, clean_from_cos, append_pywren_stats
-from annotation_pipeline.utils import logger
+    clip_centr_df, define_centr_segments, get_imzml_reader
+from annotation_pipeline.utils import clean_from_cos, append_pywren_stats, logger
 
 
 class Pipeline(object):
@@ -43,23 +40,27 @@ class Pipeline(object):
         self.run_fdr()
 
     def load_ds(self):
-        self.imzml_parser = ImzMLParser(ds_imzml_path(self.input_data['path']))
-        self.coordinates = [coo[:2] for coo in self.imzml_parser.coordinates]
-        self.sp_n = len(self.coordinates)
-        logger.info(f'Parsed imzml: {self.sp_n} spectra found')
+        self.imzml_reader = get_imzml_reader(self.pywren_executor,
+                                             self.config["storage"]["ds_bucket"],
+                                             self.input_data)
+
+        logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
 
     def split_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"])
-        self.specra_chunks_keys = chunk_spectra(self.config, self.input_data, self.imzml_parser, self.coordinates)
+        chunk_spectra(self.pywren_executor, self.config, self.input_data, self.imzml_reader)
 
     def segment_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
         sample_sp_n = 1000
-        self.ds_segments_bounds = define_ds_segments(self.imzml_parser, self.ds_segm_size_mb,
-                                                     sample_ratio=sample_sp_n / self.sp_n)
+        self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
+                                                     self.input_data["ibd_path"],
+                                                     self.config["storage"]["ds_bucket"],
+                                                     self.input_data["ds_imzml_reader"],
+                                                     self.ds_segm_size_mb, sample_sp_n)
         self.ds_segm_n, self.ds_segms_len = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
                                             self.input_data["ds_chunks"], self.input_data["ds_segments"],
-                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_parser.mzPrecision)
+                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
@@ -82,14 +83,15 @@ class Pipeline(object):
     def annotate(self):
         logger.info('Annotating...')
         clean_from_cos(self.config, self.config["storage"]["output_bucket"], self.output["formula_images"])
-
-        memory_capacity_mb = 2048  # TODO: Detect when this isn't enough and bump it up to 4096
+        if self.ds_segm_n * self.ds_segm_size_mb > 5000:
+            memory_capacity_mb = 4096
+        else:
+            memory_capacity_mb = 2048  # TODO: Detect when this isn't enough and bump it up to 4096
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
                                                        self.input_data["ds_segments"],
-                                                       self.ds_segments_bounds, self.ds_segms_len, self.coordinates,
-                                                       self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
-                                                       self.imzml_parser.mzPrecision)
+                                                       self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
+                                                       self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 
         futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/',
                                            runtime_memory=memory_capacity_mb)
