@@ -5,7 +5,7 @@ import time
 from annotation_pipeline.pipeline import Pipeline
 
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run annotation pipeline', usage='')

@@ -5,7 +5,7 @@ import time
 from annotation_pipeline.__main__ import generate_centroids
 
 import logging
-logging.basicConfig(level=logging.DEBUG)
+logging.basicConfig(level=logging.INFO)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate centroids', usage='')
