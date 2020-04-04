@@ -146,6 +146,11 @@ def read_object_with_retry(ibm_cos, bucket, key, stream_reader=None):
 
 
 def read_ranges_from_url(url, ranges):
+    """
+    Download partial ranges from a file over HTTP. This combines adjacent/overlapping ranges
+    to minimize the number of HTTP requests without wasting any bandwidth if there are large gaps
+    between requested ranges.
+    """
     MAX_JUMP = 2 ** 16 # Largest gap between ranges before a new request should be made
 
     request_ranges = []

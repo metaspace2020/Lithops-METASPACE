@@ -120,11 +120,6 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
     logger.info(f'Uploaded {len(chunks)} dataset chunks')
 
 
-
-
-
-
-
 def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sample_n):
     def get_segm_bounds(ibm_cos):
         imzml_reader = pickle.loads(read_object_with_retry(ibm_cos, bucket, ds_imzml_reader))
