@@ -45,12 +45,12 @@ def get_spectra(ibd_url, imzml_reader, sp_inds):
     data_ranges = read_ranges_from_url(ibd_url, ranges_to_read)
     mz_data = data_ranges[:len(sp_inds)]
     int_data = data_ranges[len(sp_inds):]
-    # del data_ranges
+    del data_ranges
 
     for i, sp_idx in enumerate(sp_inds):
         mzs = np.frombuffer(mz_data[i], dtype=imzml_reader.mzPrecision)
         ints = np.frombuffer(int_data[i], dtype=imzml_reader.intensityPrecision)
-        # mz_data[i] = int_data[i] = None  # Avoid holding memory longer than necessary
+        mz_data[i] = int_data[i] = None  # Avoid holding memory longer than necessary
         yield sp_idx, mzs, ints
 
 
