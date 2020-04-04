@@ -86,7 +86,7 @@ class Pipeline(object):
         if self.ds_segm_n * self.ds_segm_size_mb > 5000:
             memory_capacity_mb = 4096
         else:
-            memory_capacity_mb = 2048  # TODO: Detect when this isn't enough and bump it up to 4096
+            memory_capacity_mb = 2048
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
                                                        self.input_data["ds_segments"],
