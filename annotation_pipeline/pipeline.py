@@ -54,9 +54,8 @@ class Pipeline(object):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
         sample_sp_n = 1000
         self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
-                                                     self.input_data["ibd_path"],
+                                                     self.input_data,
                                                      self.config["storage"]["ds_bucket"],
-                                                     self.input_data["ds_imzml_reader"],
                                                      self.ds_segm_size_mb, sample_sp_n)
         self.ds_segm_n, self.ds_segms_len = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
                                             self.input_data["ds_chunks"], self.input_data["ds_segments"],

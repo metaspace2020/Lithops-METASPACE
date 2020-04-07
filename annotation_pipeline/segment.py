@@ -4,11 +4,10 @@ import numpy as np
 import pandas as pd
 import sys
 
-import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
 from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, list_keys, \
-    clean_from_cos, read_object_with_retry, read_ranges_from_url
+    clean_from_cos, read_object_with_retry, read_ranges_from_object
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -18,9 +17,10 @@ MAX_MZ_VALUE = 10 ** 5
 
 def get_imzml_reader(pw, bucket, input_data):
     def get_portable_imzml_reader(ibm_cos):
-        imzml_stream = requests.get(input_data['imzml_path'], stream=True).raw
-        parser = ImzMLParser(imzml_stream, ibd_file=None)
-        imzml_reader = parser.portable_spectrum_reader()
+        def parse_stream(imzml_stream):
+            return ImzMLParser(imzml_stream, ibd_file=None).portable_spectrum_reader()
+        imzml_reader = read_object_with_retry(ibm_cos, input_data['input_bucket'],
+                                              input_data['imzml_key'], stream_reader=parse_stream)
         ibm_cos.put_object(Bucket=bucket,
                            Key=input_data["ds_imzml_reader"],
                            Body=pickle.dumps(imzml_reader))
@@ -34,7 +34,7 @@ def get_imzml_reader(pw, bucket, input_data):
     return imzml_reader
 
 
-def get_spectra(ibd_url, imzml_reader, sp_inds):
+def get_spectra(ibm_cos, input_data, imzml_reader, sp_inds):
     mz_starts = np.array(imzml_reader.mzOffsets)[sp_inds]
     mz_ends = mz_starts + np.array(imzml_reader.mzLengths)[sp_inds] * np.dtype(imzml_reader.mzPrecision).itemsize
     mz_ranges = np.stack([mz_starts, mz_ends], axis=1)
@@ -42,7 +42,8 @@ def get_spectra(ibd_url, imzml_reader, sp_inds):
     int_ends = int_starts + np.array(imzml_reader.intensityLengths)[sp_inds] * np.dtype(imzml_reader.intensityPrecision).itemsize
     int_ranges = np.stack([int_starts, int_ends], axis=1)
     ranges_to_read = np.vstack([mz_ranges, int_ranges])
-    data_ranges = read_ranges_from_url(ibd_url, ranges_to_read)
+    data_ranges = read_ranges_from_object(ibm_cos, input_data['input_bucket'],
+                                          input_data['ibd_key'], ranges_to_read)
     mz_data = data_ranges[:len(sp_inds)]
     int_data = data_ranges[len(sp_inds):]
     del data_ranges
@@ -90,7 +91,7 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
         sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
 
         chunk_start = 0
-        for sp_i, mzs, ints in get_spectra(input_data['ibd_path'], imzml_reader, chunk_sp_inds):
+        for sp_i, mzs, ints in get_spectra(ibm_cos, input_data, imzml_reader, chunk_sp_inds):
             chunk_end = chunk_start + len(mzs)
             sp_mz_int_buf[chunk_start:chunk_end, 0] = sp_id_to_idx[sp_i]
             sp_mz_int_buf[chunk_start:chunk_end, 1] = mzs
@@ -120,13 +121,13 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
     logger.info(f'Uploaded {len(chunks)} dataset chunks')
 
 
-def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sample_n):
+def define_ds_segments(pw, input_data, bucket, ds_segm_size_mb, sample_n):
     def get_segm_bounds(ibm_cos):
-        imzml_reader = pickle.loads(read_object_with_retry(ibm_cos, bucket, ds_imzml_reader))
+        imzml_reader = pickle.loads(read_object_with_retry(ibm_cos, bucket, input_data["ds_imzml_reader"]))
         sp_n = len(imzml_reader.coordinates)
         sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
         print(f'Sampling {len(sample_sp_inds)} spectra')
-        spectra_sample = list(get_spectra(ibd_url, imzml_reader, sample_sp_inds))
+        spectra_sample = list(get_spectra(ibm_cos, input_data, imzml_reader, sample_sp_inds))
 
         spectra_mzs = np.concatenate([mzs for sp_id, mzs, ints in spectra_sample])
         print(f'Got {len(spectra_mzs)} mzs')
