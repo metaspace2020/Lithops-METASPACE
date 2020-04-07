@@ -1,8 +1,7 @@
 {
   "dataset": {
-    "input_bucket": "metaspace-public",
-    "imzml_key": "metabolomics/ds/CT26_xenograft/Image1_CT26.imzML",
-    "ibd_key": "metabolomics/ds/CT26_xenograft/Image1_CT26.ibd",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/CT26_xenograft",
     "ds_imzml_reader": "metabolomics/tmp/imzml_reader/CT26_xenograft.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",

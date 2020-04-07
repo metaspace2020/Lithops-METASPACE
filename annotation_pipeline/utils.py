@@ -8,6 +8,8 @@ import ibm_botocore
 import pandas as pd
 import csv
 
+import requests
+
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
@@ -143,10 +145,10 @@ def read_object_with_retry(ibm_cos, bucket, key, stream_reader=None):
     raise last_exception
 
 
-def read_ranges_from_object(ibm_cos, bucket, key, ranges):
+def read_ranges_from_url(url, ranges):
     """
-    Download partial ranges from an object. This combines adjacent/overlapping ranges
-    to minimize the number of requests without wasting any bandwidth if there are large gaps
+    Download partial ranges from a file over HTTP. This combines adjacent/overlapping ranges
+    to minimize the number of HTTP requests without wasting any bandwidth if there are large gaps
     between requested ranges.
     """
     MAX_JUMP = 2 ** 16 # Largest gap between ranges before a new request should be made
@@ -175,8 +177,7 @@ def read_ranges_from_object(ibm_cos, bucket, key, ranges):
     with ThreadPoolExecutor() as ex:
         def get_range(lo_hi):
             lo, hi = lo_hi
-            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key, Range=f'bytes={lo}-{hi}')
-            return data_stream['Body'].read()
+            return requests.get(url, headers={'Range': f'bytes={lo}-{hi}'}).content
         request_results = list(ex.map(get_range, request_ranges))
 
     return [request_results[request_i][request_lo:request_hi]

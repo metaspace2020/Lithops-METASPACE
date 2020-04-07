@@ -1,8 +1,7 @@
 {
   "dataset": {
-    "input_bucket": "metaspace-public",
-    "imzml_key": "metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.imzML",
-    "ibd_key": "metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.ibd",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/Brain02_Bregma1-42_02",
     "ds_imzml_reader": "metabolomics/tmp/imzml_reader/Brain02_Bregma1-42_02.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",

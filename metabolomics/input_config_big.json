@@ -1,8 +1,7 @@
 {
   "dataset": {
-    "input_bucket": "metaspace-public",
-    "imzml_key": "metabolomics/ds/AZ_Rat_brains/Image5.imzML",
-    "ibd_key": "metabolomics/ds/AZ_Rat_brains/Image5.ibd",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/AZ_Rat_brains",
     "ds_imzml_reader": "metabolomics/tmp/imzml_reader/AZ_Rat_brains.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",
