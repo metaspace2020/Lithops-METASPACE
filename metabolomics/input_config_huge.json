@@ -1,12 +1,14 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/CT26_xenograft",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/CT26_xenograft",
+    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/CT26_xenograft.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
-    "isocalc_sigma": 0.00123792863514,
+    "isocalc_sigma": 0.001238,
     "metaspace_id": "2016-09-21_16h06m49s"
   },
   "molecular_db": {

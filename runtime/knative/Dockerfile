@@ -37,7 +37,8 @@ RUN pip install --upgrade setuptools six \
         pandas==0.25.1 \
         scipy==1.3.1 \
         msgpack==0.6.2 \
-        msgpack-numpy==0.4.4.3
+        msgpack-numpy==0.4.4.3 \
+	    pyimzML==1.3.0
 
 # Copy PyWren proxy and lib to the container image.
 ENV APP_HOME /pywren

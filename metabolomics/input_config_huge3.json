@@ -1,7 +1,9 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/X089-Mousebrain",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/X089-Mousebrain/X089-Mousebrain_842x603_12um_A25__DB.imzml",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/X089-Mousebrain/X089-Mousebrain_842x603_12um_A25__DB.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks/X089-Mousebrain",
+    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/X089-Mousebrain.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,

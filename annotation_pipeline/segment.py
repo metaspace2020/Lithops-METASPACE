@@ -1,8 +1,14 @@
+import pickle
+
 import numpy as np
 import pandas as pd
 import sys
-from annotation_pipeline.utils import logger, get_pixel_indices, get_ibm_cos_client, append_pywren_stats, list_keys,\
-    clean_from_cos, read_object_with_retry
+
+import requests
+from pyimzml.ImzMLParser import ImzMLParser
+
+from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, list_keys, \
+    clean_from_cos, read_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -10,92 +16,134 @@ ISOTOPIC_PEAK_N = 4
 MAX_MZ_VALUE = 10 ** 5
 
 
-def chunk_spectra(config, input_data, imzml_parser, coordinates):
-    cos_client = get_ibm_cos_client(config)
-    sp_id_to_idx = get_pixel_indices(coordinates)
+def get_imzml_reader(pw, bucket, input_data):
+    def get_portable_imzml_reader(ibm_cos):
+        imzml_stream = requests.get(input_data['imzml_path'], stream=True).raw
+        parser = ImzMLParser(imzml_stream, ibd_file=None)
+        imzml_reader = parser.portable_spectrum_reader()
+        ibm_cos.put_object(Bucket=bucket,
+                           Key=input_data["ds_imzml_reader"],
+                           Body=pickle.dumps(imzml_reader))
+        return imzml_reader
 
-    def chunk_size(coords, max_size=512 * 1024 ** 2):
-        curr_sp_i = 0
-        sp_inds_list, mzs_list, ints_list = [], [], []
+    memory_capacity_mb = 1024
+    future = pw.call_async(get_portable_imzml_reader, [])
+    imzml_reader = pw.get_result(future)
+    append_pywren_stats(future, memory=memory_capacity_mb)
+
+    return imzml_reader
+
+
+def get_spectra(ibd_url, imzml_reader, sp_inds):
+    mz_starts = np.array(imzml_reader.mzOffsets)[sp_inds]
+    mz_ends = mz_starts + np.array(imzml_reader.mzLengths)[sp_inds] * np.dtype(imzml_reader.mzPrecision).itemsize
+    mz_ranges = np.stack([mz_starts, mz_ends], axis=1)
+    int_starts = np.array(imzml_reader.intensityOffsets)[sp_inds]
+    int_ends = int_starts + np.array(imzml_reader.intensityLengths)[sp_inds] * np.dtype(imzml_reader.intensityPrecision).itemsize
+    int_ranges = np.stack([int_starts, int_ends], axis=1)
+    ranges_to_read = np.vstack([mz_ranges, int_ranges])
+    data_ranges = read_ranges_from_url(ibd_url, ranges_to_read)
+    mz_data = data_ranges[:len(sp_inds)]
+    int_data = data_ranges[len(sp_inds):]
+    del data_ranges
+
+    for i, sp_idx in enumerate(sp_inds):
+        mzs = np.frombuffer(mz_data[i], dtype=imzml_reader.mzPrecision)
+        ints = np.frombuffer(int_data[i], dtype=imzml_reader.intensityPrecision)
+        mz_data[i] = int_data[i] = None  # Avoid holding memory longer than necessary
+        yield sp_idx, mzs, ints
+
+
+def chunk_spectra(pw, config, input_data, imzml_reader):
+    MAX_CHUNK_SIZE = 512 * 1024 ** 2  # 512MB
+
+    sp_id_to_idx = get_pixel_indices(imzml_reader.coordinates)
+    row_size = 3 * max(4,
+                       np.dtype(imzml_reader.mzPrecision).itemsize,
+                       np.dtype(imzml_reader.intensityPrecision).itemsize)
+
+    def plan_chunks():
+        chunk_sp_inds = []
 
         estimated_size_mb = 0
-        for x, y in coords:
-            mzs_, ints_ = imzml_parser.getspectrum(curr_sp_i)
-            mzs_, ints_ = map(np.array, [mzs_, ints_])
-            sp_idx = sp_id_to_idx[curr_sp_i]
-            sp_inds_list.append(np.ones_like(mzs_) * sp_idx)
-            mzs_list.append(mzs_)
-            ints_list.append(ints_)
-            estimated_size_mb += 2 * mzs_.nbytes + ints_.nbytes
-            curr_sp_i += 1
-            if estimated_size_mb > max_size:
-                yield sp_inds_list, mzs_list, ints_list
-                sp_inds_list, mzs_list, ints_list = [], [], []
+        # Iterate in the same order that intensities are laid out in the file, hopefully this will
+        # prevent fragmented read patterns
+        for sp_i in np.argsort(imzml_reader.intensityOffsets):
+            spectrum_size = imzml_reader.mzLengths[sp_i] * row_size
+            if estimated_size_mb + spectrum_size > MAX_CHUNK_SIZE:
                 estimated_size_mb = 0
+                yield np.array(chunk_sp_inds)
+                chunk_sp_inds = []
 
-        if len(sp_inds_list) > 0:
-            yield sp_inds_list, mzs_list, ints_list
+            estimated_size_mb += spectrum_size
+            chunk_sp_inds.append(sp_i)
 
-    def _upload_chunk(ch_i, sp_mz_int_buf):
+        if chunk_sp_inds:
+            yield np.array(chunk_sp_inds)
+
+    def upload_chunk(ibm_cos, ch_i):
+        chunk_sp_inds = chunks[ch_i]
+        # Get imzml_reader from COS because it's too big to include via pywren captured vars
+        imzml_reader = pickle.loads(read_object_with_retry(ibm_cos, config["storage"]["ds_bucket"],
+                                              input_data["ds_imzml_reader"]))
+        n_spectra = sum(imzml_reader.mzLengths[sp_i] for sp_i in chunk_sp_inds)
+        sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
+
+        chunk_start = 0
+        for sp_i, mzs, ints in get_spectra(input_data['ibd_path'], imzml_reader, chunk_sp_inds):
+            chunk_end = chunk_start + len(mzs)
+            sp_mz_int_buf[chunk_start:chunk_end, 0] = sp_id_to_idx[sp_i]
+            sp_mz_int_buf[chunk_start:chunk_end, 1] = mzs
+            sp_mz_int_buf[chunk_start:chunk_end, 2] = ints
+            chunk_start = chunk_end
+
+        by_mz = np.argsort(sp_mz_int_buf[:, 1])
+        sp_mz_int_buf = sp_mz_int_buf[by_mz]
+        del by_mz
+
         chunk = msgpack.dumps(sp_mz_int_buf)
         key = f'{input_data["ds_chunks"]}/{ch_i}.msgpack'
         size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        cos_client.put_object(Bucket=config["storage"]["ds_bucket"],
-                              Key=key,
-                              Body=chunk)
+        ibm_cos.put_object(Bucket=config["storage"]["ds_bucket"],
+                           Key=key,
+                           Body=chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
         return key
 
-    max_size = 512 * 1024 ** 2  # 512MB
-    chunk_it = chunk_size(coordinates, max_size)
+    chunks = list(plan_chunks())
+    memory_capacity_mb = 3072
+    futures = pw.map(upload_chunk, range(len(chunks)), runtime_memory=memory_capacity_mb)
+    pw.wait(futures)
+    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(chunks))
 
-    futures = []
-    with ThreadPoolExecutor() as ex:
-        for ch_i, chunk in enumerate(chunk_it):
-            sp_inds_list, mzs_list, ints_list = chunk
-            dtype = imzml_parser.mzPrecision
-            mzs = np.concatenate(mzs_list)
-            by_mz = np.argsort(mzs)
-            sp_mz_int_buf = np.array([np.concatenate(sp_inds_list)[by_mz],
-                                      mzs[by_mz],
-                                      np.concatenate(ints_list)[by_mz]], dtype).T
-
-            logger.info(f'Parsed spectra chunk {ch_i}')
-            futures.append(ex.submit(_upload_chunk, ch_i, sp_mz_int_buf))
-
-        logger.info(f'Parsed dataset into {len(futures)} chunks')
-
-    logger.info(f'Uploaded {len(futures)} dataset chunks')
-    keys = [future.result() for future in futures]
-    return keys
+    logger.info(f'Uploaded {len(chunks)} dataset chunks')
 
 
-def spectra_sample_gen(imzml_parser, sample_ratio=0.05):
-    sp_n = len(imzml_parser.coordinates)
-    sample_size = int(sp_n * sample_ratio)
-    sample_sp_inds = np.random.choice(np.arange(sp_n), sample_size)
-    for sp_idx in sample_sp_inds:
-        mzs, ints = imzml_parser.getspectrum(sp_idx)
-        yield sp_idx, mzs, ints
+def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sample_n):
+    def get_segm_bounds(ibm_cos):
+        imzml_reader = pickle.loads(read_object_with_retry(ibm_cos, bucket, ds_imzml_reader))
+        sp_n = len(imzml_reader.coordinates)
+        sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
+        print(f'Sampling {len(sample_sp_inds)} spectra')
+        spectra_sample = list(get_spectra(ibd_url, imzml_reader, sample_sp_inds))
 
+        spectra_mzs = np.concatenate([mzs for sp_id, mzs, ints in spectra_sample])
+        print(f'Got {len(spectra_mzs)} mzs')
 
-def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_ratio=0.05):
+        total_size = 3 * spectra_mzs.nbytes * sp_n / len(sample_sp_inds)
+
+        segm_n = int(np.ceil(total_size / (ds_segm_size_mb * 2 ** 20)))
+
+        segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n + 1)]
+        segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
+        return np.array(list(zip(segm_lower_bounds[:-1], segm_lower_bounds[1:])))
+
     logger.info('Defining dataset segments bounds')
-    spectra_sample = list(spectra_sample_gen(imzml_parser, sample_ratio=sample_ratio))
-
-    spectra_mzs = np.array([mz for sp_id, mzs, ints in spectra_sample for mz in mzs])
-    total_n_mz = spectra_mzs.shape[0] / sample_ratio
-
-    float_prec = 4 if imzml_parser.mzPrecision == 'f' else 8
-    segm_arr_columns = 3
-    segm_n = segm_arr_columns * (total_n_mz * float_prec) // (ds_segm_size_mb * 2 ** 20)
-    segm_n = max(1, int(segm_n))
-
-    segm_bounds_q = [i * 1 / segm_n for i in range(0, segm_n + 1)]
-    segm_lower_bounds = [np.quantile(spectra_mzs, q) for q in segm_bounds_q]
-    ds_segments = np.array(list(zip(segm_lower_bounds[:-1], segm_lower_bounds[1:])))
-
+    memory_capacity_mb = 1024
+    future = pw.call_async(get_segm_bounds, [], runtime_memory=memory_capacity_mb)
+    ds_segments = pw.get_result(future)
+    append_pywren_stats(future, memory=memory_capacity_mb)
     logger.info(f'Generated {len(ds_segments)} dataset bounds: {ds_segments[0]}...{ds_segments[-1]}')
     return ds_segments
 
