@@ -125,7 +125,7 @@ def append_pywren_stats(futures, memory_mb, plus_objects=0, minus_objects=0):
 
 def get_pywren_stats(log_path=STATUS_PATH):
     stats = pd.read_csv(log_path)
-    print('Total PyWren cost: {:.2f} $'.format(stats['Cost'].sum()))
+    print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
     return stats
 
 
