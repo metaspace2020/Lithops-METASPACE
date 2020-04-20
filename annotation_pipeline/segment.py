@@ -29,7 +29,7 @@ def get_imzml_reader(pw, bucket, input_data):
     memory_capacity_mb = 1024
     future = pw.call_async(get_portable_imzml_reader, [])
     imzml_reader = pw.get_result(future)
-    append_pywren_stats(future, memory=memory_capacity_mb)
+    append_pywren_stats(future, memory_mb=memory_capacity_mb)
 
     return imzml_reader
 
@@ -115,7 +115,7 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
     memory_capacity_mb = 3072
     futures = pw.map(upload_chunk, range(len(chunks)), runtime_memory=memory_capacity_mb)
     pw.wait(futures)
-    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(chunks))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(chunks))
 
     logger.info(f'Uploaded {len(chunks)} dataset chunks')
 
@@ -143,7 +143,7 @@ def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sa
     memory_capacity_mb = 1024
     future = pw.call_async(get_segm_bounds, [], runtime_memory=memory_capacity_mb)
     ds_segments = pw.get_result(future)
-    append_pywren_stats(future, memory=memory_capacity_mb)
+    append_pywren_stats(future, memory_mb=memory_capacity_mb)
     logger.info(f'Generated {len(ds_segments)} dataset bounds: {ds_segments[0]}...{ds_segments[-1]}')
     return ds_segments
 
@@ -184,7 +184,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
     first_futures = pw.map(segment_spectra_chunk, f'{bucket}/{ds_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     pw.get_result(first_futures)
     if not isinstance(first_futures, list): first_futures = [first_futures]
-    append_pywren_stats(first_futures, memory=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(first_futures, memory_mb=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
 
     def merge_spectra_chunk_segments(segm_i, ibm_cos):
         print(f'Merging segment {segm_i} spectra chunks')
@@ -225,7 +225,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_prefix, ds_segment
     # same memory capacity
     second_futures = pw.map(merge_spectra_chunk_segments, range(len(ds_segments_bounds)), runtime_memory=memory_capacity_mb)
     ds_segms_len = list(np.concatenate(pw.get_result(second_futures)))
-    append_pywren_stats(second_futures, memory=memory_capacity_mb, plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
 
     return ds_segm_n, ds_segms_len
 
@@ -248,7 +248,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_m
     memory_capacity_mb = 512
     futures = pw.map(clip_centr_df_chunk, f'{bucket}/{centr_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     centr_n = sum(pw.get_result(futures))
-    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(futures))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
 
     logger.info(f'Prepared {centr_n} centroids')
     return centr_n
@@ -266,7 +266,7 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
     memory_capacity_mb = 512
     futures = pw.map(get_first_peak_mz, f'{bucket}/{clip_centr_chunk_prefix}/', runtime_memory=memory_capacity_mb)
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
-    append_pywren_stats(futures, memory=memory_capacity_mb)
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
     ds_size_mb = ds_segm_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
@@ -313,7 +313,7 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
     memory_capacity_mb = 512
     first_futures = pw.map(segment_centr_chunk, f'{bucket}/{clip_centr_chunk_prefix}/', runtime_memory=memory_capacity_mb)
     pw.get_result(first_futures)
-    append_pywren_stats(first_futures, memory=memory_capacity_mb,
+    append_pywren_stats(first_futures, memory_mb=memory_capacity_mb,
                         plus_objects=len(first_futures) * len(centr_segm_lower_bounds))
 
     def merge_centr_df_segments(segm_i, ibm_cos):
@@ -347,7 +347,7 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
     memory_capacity_mb = 1024
     second_futures = pw.map(merge_centr_df_segments, range(len(centr_segm_lower_bounds)), runtime_memory=memory_capacity_mb)
     pw.get_result(second_futures)
-    append_pywren_stats(second_futures, memory=memory_capacity_mb,
+    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb,
                         plus_objects=centr_segm_n, minus_objects=len(first_futures) * len(centr_segm_lower_bounds))
 
     return centr_segm_n

@@ -80,7 +80,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
     memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
-    append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(futures))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), key=ranking_keys)
@@ -131,6 +131,6 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
     memory_capacity_mb = 256
     futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory=memory_capacity_mb)
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
     return pd.concat(results)

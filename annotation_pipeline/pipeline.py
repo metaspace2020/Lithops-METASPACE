@@ -98,7 +98,7 @@ class Pipeline(object):
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         self.images_cloud_objs = list(chain(*images_cloud_objs))
-        append_pywren_stats(futures, memory=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
+        append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
 
         logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
 
