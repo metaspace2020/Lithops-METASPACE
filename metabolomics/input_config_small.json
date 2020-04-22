@@ -23,8 +23,5 @@
     ],
     "adducts": ["","+H"],
     "modifiers": ["", "-H2O"]
-  },
-  "output": {
-    "formula_images": "metabolomics/tmp/formula_images"
   }
 }

@@ -30,8 +30,5 @@
       "+CH3CN", "+CH3OH", "-CH4", "-HF", "-HCCH", "-HCN", "-H2CCH2", "-C2H6", "-NO", "-CH3OH", "-H2S",
       "-CH2CO", "-CH3CHCH2", "-C2H5OH", "-NO2", "-SO", "-C4H8", "-C4H10", "-CH3COOH", "-HBr", "-HI"
     ]
-  },
-  "output": {
-    "formula_images": "metabolomics/tmp/formula_images"
   }
 }
