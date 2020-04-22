@@ -18,10 +18,9 @@ class Pipeline(object):
     def __init__(self, config, input_config):
         self.config = config
         self.storage = config['storage']
-        self.input_data = input_config['dataset']
-        self.input_db = input_config['molecular_db']
-        self.output = input_config['output']
-        self.pywren_executor = pywren.ibm_cf_executor(config=self.config, runtime_memory=2048)
+        self.input_config_ds = input_config['dataset']
+        self.input_config_db = input_config['molecular_db']
+        self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
 
         self.ds_segm_size_mb = 100
         self.image_gen_config = {
@@ -42,58 +41,57 @@ class Pipeline(object):
     def load_ds(self):
         self.imzml_reader = get_imzml_reader(self.pywren_executor,
                                              self.config["storage"]["ds_bucket"],
-                                             self.input_data)
+                                             self.input_config_ds)
 
         logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
 
     def split_ds(self):
-        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_chunks"])
-        chunk_spectra(self.pywren_executor, self.config, self.input_data, self.imzml_reader)
+        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_chunks"])
+        chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
 
     def segment_ds(self):
-        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_data["ds_segments"])
+        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_segments"])
         sample_sp_n = 1000
         self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
-                                                     self.input_data["ibd_path"],
+                                                     self.input_config_ds["ibd_path"],
                                                      self.config["storage"]["ds_bucket"],
-                                                     self.input_data["ds_imzml_reader"],
+                                                     self.input_config_ds["ds_imzml_reader"],
                                                      self.ds_segm_size_mb, sample_sp_n)
         self.ds_segm_n, self.ds_segms_len = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
-                                            self.input_data["ds_chunks"], self.input_data["ds_segments"],
-                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
+                                                            self.input_config_ds["ds_chunks"], self.input_config_ds["ds_segments"],
+                                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
 
-        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["clipped_centroids_chunks"])
+        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["clipped_centroids_chunks"])
         self.centr_n = clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                     self.input_db["centroids_chunks"], self.input_db["clipped_centroids_chunks"],
+                                     self.input_config_db["centroids_chunks"], self.input_config_db["clipped_centroids_chunks"],
                                      mz_min, mz_max)
 
-        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_db["centroids_segments"])
+        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["centroids_segments"])
         self.centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                                             self.input_db["clipped_centroids_chunks"], self.centr_n,
+                                                             self.input_config_db["clipped_centroids_chunks"], self.centr_n,
                                                              self.ds_segm_n, self.ds_segm_size_mb)
         self.centr_segm_n = segment_centroids(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                              self.input_db["clipped_centroids_chunks"],
-                                              self.input_db["centroids_segments"], self.centr_segm_lower_bounds)
+                                              self.input_config_db["clipped_centroids_chunks"],
+                                              self.input_config_db["centroids_segments"], self.centr_segm_lower_bounds)
         logger.info(f'Segmented centroids chunks into {self.centr_segm_n} segments')
 
     def annotate(self):
         logger.info('Annotating...')
-        clean_from_cos(self.config, self.config["storage"]["output_bucket"], self.output["formula_images"])
         if self.ds_segm_n * self.ds_segm_size_mb > 5000:
             memory_capacity_mb = 4096
         else:
             memory_capacity_mb = 2048
         process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
                                                        self.config["storage"]["output_bucket"],
-                                                       self.input_data["ds_segments"],
+                                                       self.input_config_ds["ds_segments"],
                                                        self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                        self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 
-        futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_db["centroids_segments"]}/',
+        futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_config_db["centroids_segments"]}/',
                                            runtime_memory=memory_capacity_mb)
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
         self.formula_metrics_df = pd.concat(formula_metrics_list)
@@ -104,7 +102,7 @@ class Pipeline(object):
 
     def run_fdr(self):
         self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                              self.input_data, self.input_db, self.formula_metrics_df)
+                                              self.input_config_ds, self.input_config_db, self.formula_metrics_df)
         self.fdrs = calculate_fdrs(self.pywren_executor, self.config['storage']['ds_bucket'], self.rankings_df)
 
         logger.info(f'Number of annotations at with FDR less than:')
@@ -140,7 +138,7 @@ class Pipeline(object):
     def check_results(self):
         results_df = self.get_results()
         metaspace_options = self.config.get('metaspace_options', {})
-        reference_results = get_reference_results(metaspace_options, self.input_data['metaspace_id'])
+        reference_results = get_reference_results(metaspace_options, self.input_config_ds['metaspace_id'])
 
         checked_results = check_results(results_df, reference_results)
 
