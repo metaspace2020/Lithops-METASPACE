@@ -33,7 +33,7 @@ with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
 
 ### Example notebooks
 
-The main notebook is [`pywren-annotation-pipeline.ipynb`](./pywren-annotation-pipeline.ipynb), which allows you to run
+The main notebook is [`pywren-annotation-pipeline-demo.ipynb`](pywren-annotation-pipeline-demo.ipynb), which allows you to run
 through the whole pipeline, and see the results at each step.
 
 There are also 3 notebooks prepared for benchmarking that can be run with Jupyter Notebook:
