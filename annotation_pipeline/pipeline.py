@@ -57,9 +57,10 @@ class Pipeline(object):
                                                      self.config["storage"]["ds_bucket"],
                                                      self.input_config_ds["ds_imzml_reader"],
                                                      self.ds_segm_size_mb, sample_sp_n)
-        self.ds_segm_n, self.ds_segms_len = segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
-                                                            self.input_config_ds["ds_chunks"], self.input_config_ds["ds_segments"],
-                                                            self.ds_segments_bounds, self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
+        self.ds_segms_cobjects, self.ds_segms_len = \
+            segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
+                            self.input_config_ds["ds_chunks"], self.ds_segments_bounds, self.ds_segm_size_mb)
+        self.ds_segm_n = len(self.ds_segms_cobjects)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
