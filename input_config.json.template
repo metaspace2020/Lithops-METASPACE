@@ -1,7 +1,9 @@
 {
   "dataset": {
-    "path": "metabolomics/ds/****",
+    "imzml_path": "****.imzML",
+    "ibd_path": "****.ibd",
     "ds_chunks": "metabolomics/tmp/ds_chunks",
+    "ds_imzml_reader": "****.pickle",
     "ds_segments": "metabolomics/tmp/ds_segments",
     "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
@@ -22,8 +24,5 @@
     ],
     "adducts": ["","+H","+Na","+K"],
     "modifiers": ["", "-H2O", "-CO2", "-NH3"]
-  },
-  "output": {
-    "formula_images": "metabolomics/tmp/formula_images"
   }
 }
