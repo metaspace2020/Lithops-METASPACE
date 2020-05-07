@@ -13,7 +13,7 @@ from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 class ImagesManager:
     min_memory_allowed = 64 * 1024 ** 2  # 64MB
 
-    def __init__(self, internal_storage, bucket, max_formula_images_size):
+    def __init__(self, storage, bucket, max_formula_images_size):
         if max_formula_images_size < self.__class__.min_memory_allowed:
             raise Exception(f'There isn\'t enough memory to generate images, consider increasing PyWren\'s memory.')
 
@@ -23,7 +23,7 @@ class ImagesManager:
 
         self._formula_images_size = 0
         self._max_formula_images_size = max_formula_images_size
-        self._internal_storage = internal_storage
+        self._storage = storage
         self._bucket = bucket
         self._partition = 0
 
@@ -49,7 +49,7 @@ class ImagesManager:
     def save_images(self):
         if self.formula_images:
             print(f'Saving {len(self.formula_images)} images')
-            cloud_obj = self._internal_storage.put_object(pickle.dumps(self.formula_images), bucket=self._bucket)
+            cloud_obj = self._storage.put_cobject(pickle.dumps(self.formula_images), bucket=self._bucket)
             self.cloud_objs.append(cloud_obj)
             self._partition += 1
         else:
@@ -108,7 +108,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 
 
 def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
-                     ds_segm_dtype, ibm_cos):
+                     ds_segm_dtype, storage):
 
     ds_segms_mb = (last_segm_i - first_segm_i + 1) * ds_segm_size_mb
     safe_mb = 512
@@ -119,7 +119,7 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_se
     ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
 
     def read_ds_segment(ds_segm_key):
-        data = read_object_with_retry(ibm_cos, ds_bucket, ds_segm_key, msgpack.load)
+        data = read_object_with_retry(storage, ds_bucket, ds_segm_key, msgpack.load)
         if type(data) == list:
             sp_arr = np.concatenate(data)
         else:
@@ -179,13 +179,13 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
-    def process_centr_segment(obj, ibm_cos, internal_storage):
+    def process_centr_segment(obj, storage):
         print(f'Reading centroids segment {obj.key}')
         # read database relevant part
         try:
             centr_df = pd.read_msgpack(obj.data_stream)
         except:
-            centr_df = read_object_with_retry(ibm_cos, obj.bucket, obj.key, pd.read_msgpack)
+            centr_df = read_object_with_retry(storage, obj.bucket, obj.key, pd.read_msgpack)
 
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
@@ -193,14 +193,14 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
         # read all segments in loop from COS
         sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i,
                                   ds_segms_len[first_ds_segm_i:last_ds_segm_i+1], pw_mem_mb,
-                                  ds_segm_size_mb, ds_segm_dtype, ibm_cos)
+                                  ds_segm_size_mb, ds_segm_dtype, storage)
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
                                            centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
         safe_mb = 1024
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
-        images_manager = ImagesManager(internal_storage, output_bucket, max_formula_images_mb * 1024 ** 2)
+        images_manager = ImagesManager(storage, output_bucket, max_formula_images_mb * 1024 ** 2)
         formula_image_metrics(formula_images_it, compute_metrics, images_manager)
         images_cloud_objs = images_manager.finish()
 

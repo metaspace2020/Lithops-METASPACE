@@ -129,12 +129,12 @@ def get_pywren_stats(log_path=STATUS_PATH):
     return stats
 
 
-def read_object_with_retry(ibm_cos, bucket, key, stream_reader=None):
+def read_object_with_retry(storage, bucket, key, stream_reader=None):
     last_exception = None
     for attempt in range(1, 4):
         try:
             print(f'Reading {key} (attempt {attempt})')
-            data_stream = ibm_cos.get_object(Bucket=bucket, Key=key)['Body']
+            data_stream = storage.get_object(Bucket=bucket, Key=key)['Body']
             if stream_reader:
                 data = stream_reader(data_stream)
             else:

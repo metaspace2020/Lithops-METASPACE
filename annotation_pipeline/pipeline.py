@@ -91,7 +91,7 @@ class Pipeline(object):
                                                        self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                        self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 
-        futures = self.pywren_executor.map(process_centr_segment, f'{self.config["storage"]["db_bucket"]}/{self.input_config_db["centroids_segments"]}/',
+        futures = self.pywren_executor.map(process_centr_segment, f'cos://{self.config["storage"]["db_bucket"]}/{self.input_config_db["centroids_segments"]}/',
                                            runtime_memory=memory_capacity_mb)
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
         self.formula_metrics_df = pd.concat(formula_metrics_list)
@@ -120,9 +120,9 @@ class Pipeline(object):
         # Only download interesting images, to prevent running out of memory
         targets = set(self.results_df.index[self.results_df.fdr <= 0.5])
 
-        def get_target_images(internal_storage, images_obj):
+        def get_target_images(images_obj, storage):
             images = {}
-            segm_images = pickle.loads(internal_storage.get_object(images_obj))
+            segm_images = pickle.loads(storage.get_cobject(images_obj))
             for k, v in segm_images.items():
                 if k in targets:
                     images[k] = v

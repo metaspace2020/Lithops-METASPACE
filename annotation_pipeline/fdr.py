@@ -21,7 +21,7 @@ def msgpack_load_text(stream):
 
 def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 
-    def build_ranking(group_i, ranking_i, database, modifier, adduct, id, ibm_cos):
+    def build_ranking(group_i, ranking_i, database, modifier, adduct, id, storage):
         print("Building ranking...")
         print(f'job_i: {id}')
         print(f'ranking_i: {ranking_i}')
@@ -30,7 +30,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        mols = pickle.loads(read_object_with_retry(ibm_cos, bucket, database))
+        mols = pickle.loads(read_object_with_retry(storage, bucket, database))
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -41,9 +41,9 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
         formula_to_id = {}
-        keys = list_keys(bucket, f'{input_db["formula_to_id_chunks"]}/', ibm_cos)
+        keys = list_keys(bucket, f'{input_db["formula_to_id_chunks"]}/', storage)
         for key in keys:
-            formula_to_id_chunk = read_object_with_retry(ibm_cos, bucket, key, msgpack_load_text)
+            formula_to_id_chunk = read_object_with_retry(storage, bucket, key, msgpack_load_text)
 
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
@@ -61,7 +61,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
             ranking_df = ranking_df[~ranking_df.msm.isna()]
             key = f'{input_data["fdr_rankings"]}/{group_i}/decoy{ranking_i}.pickle'
 
-        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(ranking_df))
+        storage.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(ranking_df))
         return id, key
 
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
@@ -90,9 +90,9 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 
 def calculate_fdrs(pw, data_bucket, rankings_df):
 
-    def run_ranking(ibm_cos, data_bucket, target_key, decoy_key):
-        target = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, target_key))
-        decoy = pickle.loads(read_object_with_retry(ibm_cos, data_bucket, decoy_key))
+    def run_ranking(storage, data_bucket, target_key, decoy_key):
+        target = pickle.loads(read_object_with_retry(storage, data_bucket, target_key))
+        decoy = pickle.loads(read_object_with_retry(storage, data_bucket, decoy_key))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()
@@ -106,10 +106,10 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
         target_fdrs = target_fdrs.sort_index()
         return target_fdrs
 
-    def merge_rankings(ibm_cos, data_bucket, target_row, decoy_keys):
+    def merge_rankings(storage, data_bucket, target_row, decoy_keys):
         print("Merging rankings...")
         print(target_row)
-        rankings = [run_ranking(ibm_cos, data_bucket, target_row.key, decoy_key) for decoy_key in decoy_keys]
+        rankings = [run_ranking(storage, data_bucket, target_row.key, decoy_key) for decoy_key in decoy_keys]
         mols = (pd.concat(rankings)
                 .rename_axis('formula_i')
                 .reset_index()
