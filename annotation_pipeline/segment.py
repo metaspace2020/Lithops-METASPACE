@@ -190,7 +190,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_bounds, ds_segm_si
         print(f'Merging segment {id} spectra chunks')
 
         def _merge(ch_i):
-            segm_spectra_chunk = storage.get_cobject(segm_cobjects[ch_i])
+            segm_spectra_chunk = msgpack.loads(storage.get_cobject(segm_cobjects[ch_i]))
             return segm_spectra_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -214,13 +214,15 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_bounds, ds_segm_si
             base_id = sum([len(bounds) for bounds in ds_segments_bounds[:id]])
             segm_i = base_id + segm_j
             print(f'Storing dataset segment {segm_i}')
-            segms_cobjects.append(storage.put_cobject(msgpack.dumps(segm)))
+            segms_cobjects.append(storage.put_cobject(msgpack.dumps(sub_segm)))
 
         return segms_len, segms_cobjects
 
-    # same memory capacity
     second_level_segms_cobjects = np.transpose(first_level_segms_cobjects).tolist()
-    second_futures = pw.map(merge_spectra_chunk_segments, [second_level_segms_cobjects], runtime_memory=memory_capacity_mb)
+    second_level_segms_cobjects = [[segm_cobjects] for segm_cobjects in second_level_segms_cobjects]
+
+    # same memory capacity
+    second_futures = pw.map(merge_spectra_chunk_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     ds_segms_len, ds_segms_cobjects = list(zip(*pw.get_result(second_futures)))
     ds_segms_len = list(np.concatenate(ds_segms_len))
     ds_segms_cobjects = list(np.concatenate(ds_segms_cobjects))

@@ -86,9 +86,7 @@ class Pipeline(object):
             memory_capacity_mb = 4096
         else:
             memory_capacity_mb = 2048
-        process_centr_segment = create_process_segment(self.config["storage"]["ds_bucket"],
-                                                       self.config["storage"]["output_bucket"],
-                                                       self.input_config_ds["ds_segments"],
+        process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                        self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                        self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 

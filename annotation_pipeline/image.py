@@ -13,7 +13,7 @@ from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 class ImagesManager:
     min_memory_allowed = 64 * 1024 ** 2  # 64MB
 
-    def __init__(self, storage, bucket, max_formula_images_size):
+    def __init__(self, storage, max_formula_images_size):
         if max_formula_images_size < self.__class__.min_memory_allowed:
             raise Exception(f'There isn\'t enough memory to generate images, consider increasing PyWren\'s memory.')
 
@@ -24,7 +24,6 @@ class ImagesManager:
         self._formula_images_size = 0
         self._max_formula_images_size = max_formula_images_size
         self._storage = storage
-        self._bucket = bucket
         self._partition = 0
 
     def __call__(self, f_i, f_metrics, f_images):
@@ -49,7 +48,7 @@ class ImagesManager:
     def save_images(self):
         if self.formula_images:
             print(f'Saving {len(self.formula_images)} images')
-            cloud_obj = self._storage.put_cobject(pickle.dumps(self.formula_images), bucket=self._bucket)
+            cloud_obj = self._storage.put_cobject(pickle.dumps(self.formula_images))
             self.cloud_objs.append(cloud_obj)
             self._partition += 1
         else:
@@ -107,7 +106,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
             yield yield_buffer(buffer)
 
 
-def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
+def read_ds_segments(first_segm_i, last_segm_i, ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
                      ds_segm_dtype, storage):
 
     ds_segms_mb = (last_segm_i - first_segm_i + 1) * ds_segm_size_mb
@@ -116,10 +115,8 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_se
     if read_memory_mb > pw_mem_mb:
         raise Exception(f'There isn\'t enough memory to read dataset segments, consider increasing PyWren\'s memory for at least {read_memory_mb} mb.')
 
-    ds_segm_keys = [f'{ds_segm_prefix}/{segm_i}.msgpack' for segm_i in range(first_segm_i, last_segm_i + 1)]
-
-    def read_ds_segment(ds_segm_key):
-        data = read_object_with_retry(storage, ds_bucket, ds_segm_key, msgpack.load)
+    def read_ds_segment(cobject):
+        data = msgpack.loads(storage.get_cobject(cobject))
         if type(data) == list:
             sp_arr = np.concatenate(data)
         else:
@@ -133,8 +130,8 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_se
         print('Using pre-allocated concatenation')
         sp_arr = np.zeros((sum(ds_segms_len), 3), dtype=ds_segm_dtype)
         row_i = 0
-        for key in ds_segm_keys:
-            sub_sp_arr = read_ds_segment(key)
+        for cobject in ds_segms_cobjects:
+            sub_sp_arr = read_ds_segment(cobject)
             sp_arr[row_i:row_i + len(sub_sp_arr)] = sub_sp_arr
             row_i += len(sub_sp_arr)
         sp_arr.view(f'{ds_segm_dtype},{ds_segm_dtype},{ds_segm_dtype}').sort(order=['f1'],
@@ -143,7 +140,7 @@ def read_ds_segments(ds_bucket, ds_segm_prefix, first_segm_i, last_segm_i, ds_se
     else:
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            sp_arr = list(pool.map(read_ds_segment, ds_segm_keys))
+            sp_arr = list(pool.map(read_ds_segment, ds_segms_cobjects))
         sp_arr = np.concatenate(sp_arr)
         sp_arr = sp_arr[sp_arr[:, 1].argsort()]  # assume mz in column 1
 
@@ -171,7 +168,7 @@ def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
     return first_ds_segm_i, last_ds_segm_i
 
 
-def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments_bounds, ds_segms_len,
+def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
                            imzml_reader, image_gen_config, pw_mem_mb, ds_segm_size_mb):
     ds_segm_dtype = imzml_reader.mzPrecision
     sample_area_mask = make_sample_area_mask(imzml_reader.coordinates)
@@ -191,7 +188,7 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
         # read all segments in loop from COS
-        sp_arr = read_ds_segments(ds_bucket, ds_segm_prefix, first_ds_segm_i, last_ds_segm_i,
+        sp_arr = read_ds_segments(first_ds_segm_i, last_ds_segm_i, ds_segms_cobjects[first_ds_segm_i:last_ds_segm_i+1],
                                   ds_segms_len[first_ds_segm_i:last_ds_segm_i+1], pw_mem_mb,
                                   ds_segm_size_mb, ds_segm_dtype, storage)
 
@@ -200,7 +197,7 @@ def create_process_segment(ds_bucket, output_bucket, ds_segm_prefix, ds_segments
         safe_mb = 1024
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
-        images_manager = ImagesManager(storage, output_bucket, max_formula_images_mb * 1024 ** 2)
+        images_manager = ImagesManager(storage, max_formula_images_mb * 1024 ** 2)
         formula_image_metrics(formula_images_it, compute_metrics, images_manager)
         images_cloud_objs = images_manager.finish()
 
