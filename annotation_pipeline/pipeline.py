@@ -47,7 +47,7 @@ class Pipeline(object):
 
     def split_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_chunks"])
-        chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
+        self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
 
     def segment_ds(self):
         clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_segments"])
@@ -58,8 +58,7 @@ class Pipeline(object):
                                                      self.input_config_ds["ds_imzml_reader"],
                                                      self.ds_segm_size_mb, sample_sp_n)
         self.ds_segms_cobjects, self.ds_segms_len = \
-            segment_spectra(self.pywren_executor, self.config["storage"]["ds_bucket"],
-                            self.input_config_ds["ds_chunks"], self.ds_segments_bounds, self.ds_segm_size_mb)
+            segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
         self.ds_segm_n = len(self.ds_segms_cobjects)
         logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 

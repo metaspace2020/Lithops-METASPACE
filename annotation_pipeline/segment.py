@@ -102,22 +102,20 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
         del by_mz
 
         chunk = msgpack.dumps(sp_mz_int_buf)
-        key = f'{input_data["ds_chunks"]}/{ch_i}.msgpack'
         size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        storage.put_object(Bucket=config["storage"]["ds_bucket"],
-                           Key=key,
-                           Body=chunk)
+        chunk_cobject = storage.put_cobject(chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
-        return key
+        return chunk_cobject
 
     chunks = list(plan_chunks())
     memory_capacity_mb = 3072
     futures = pw.map(upload_chunk, range(len(chunks)), runtime_memory=memory_capacity_mb)
-    pw.wait(futures)
+    ds_chunks_cobjects = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(chunks))
 
     logger.info(f'Uploaded {len(chunks)} dataset chunks')
+    return ds_chunks_cobjects
 
 
 def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sample_n):
@@ -148,7 +146,7 @@ def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sa
     return ds_segments
 
 
-def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_bounds, ds_segm_size_mb):
+def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb):
     ds_segm_n = len(ds_segments_bounds)
 
     # extend boundaries of the first and last segments
@@ -163,9 +161,9 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_bounds, ds_segm_si
     first_level_segm_n = max(first_level_segm_n, 1)
     ds_segments_bounds = np.array_split(ds_segments_bounds, first_level_segm_n)
 
-    def segment_spectra_chunk(obj, storage):
-        print(f'Segmenting spectra chunk {obj.key}')
-        sp_mz_int_buf = msgpack.loads(obj.data_stream.read())
+    def segment_spectra_chunk(chunk_cobject, id, storage):
+        print(f'Segmenting spectra chunk {id}')
+        sp_mz_int_buf = msgpack.loads(storage.get_cobject(chunk_cobject))
 
         def _first_level_segment_upload(segm_i):
             l = ds_segments_bounds[segm_i][0, 0]
@@ -181,7 +179,7 @@ def segment_spectra(pw, bucket, ds_chunks_prefix, ds_segments_bounds, ds_segm_si
 
     memory_safe_mb = 1024
     memory_capacity_mb = first_level_segm_size_mb * 2 + memory_safe_mb
-    first_futures = pw.map(segment_spectra_chunk, f'cos://{bucket}/{ds_chunks_prefix}/', runtime_memory=memory_capacity_mb)
+    first_futures = pw.map(segment_spectra_chunk, ds_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_level_segms_cobjects = pw.get_result(first_futures)
     if not isinstance(first_futures, list): first_futures = [first_futures]
     append_pywren_stats(first_futures, memory_mb=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
