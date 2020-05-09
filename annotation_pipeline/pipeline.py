@@ -185,13 +185,13 @@ class Pipeline(object):
 
     def clean(self):
         cobjects_to_clean = []
-        cobjects_to_clean.append(self.imzml_cobject)
-        cobjects_to_clean.extend(self.ds_chunks_cobjects)
-        cobjects_to_clean.extend(self.ds_segms_cobjects)
-        cobjects_to_clean.extend(self.clip_centr_chunks_cobjects)
-        cobjects_to_clean.extend(self.db_segms_cobjects)
-        cobjects_to_clean.extend(self.images_cloud_objs)
-        cobjects_to_clean.extend(self.rankings_df.cobject.tolist())
+        if hasattr(self, 'imzml_cobject'): cobjects_to_clean.append(self.imzml_cobject)
+        if hasattr(self, 'ds_chunks_cobjects'): cobjects_to_clean.extend(self.ds_chunks_cobjects)
+        if hasattr(self, 'ds_segms_cobjects'): cobjects_to_clean.extend(self.ds_segms_cobjects)
+        if hasattr(self, 'clip_centr_chunks_cobjects'): cobjects_to_clean.extend(self.clip_centr_chunks_cobjects)
+        if hasattr(self, 'db_segms_cobjects'): cobjects_to_clean.extend(self.db_segms_cobjects)
+        if hasattr(self, 'images_cloud_objs'): cobjects_to_clean.extend(self.images_cloud_objs)
+        if hasattr(self, 'rankings_df'): cobjects_to_clean.extend(self.rankings_df.cobject.tolist())
 
         self.pywren_executor.clean(cs=cobjects_to_clean)
         shutil.rmtree(self.cache_path)
