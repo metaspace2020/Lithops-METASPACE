@@ -3,7 +3,6 @@
     "name": "Mouse_brain",
     "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.imzML",
     "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.ibd",
-    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/Mouse_brain.pickle",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.002476,

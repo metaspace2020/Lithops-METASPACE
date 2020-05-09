@@ -3,7 +3,6 @@
     "name": "microbial_interaction",
     "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/microbial_interaction/microbial_interaction.imzML",
     "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/microbial_interaction/microbial_interaction.ibd",
-    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/microbial_interaction.pickle",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.001238,

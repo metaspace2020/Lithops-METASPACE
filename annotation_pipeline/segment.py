@@ -16,15 +16,13 @@ ISOTOPIC_PEAK_N = 4
 MAX_MZ_VALUE = 10 ** 5
 
 
-def get_imzml_reader(pw, bucket, input_data):
+def get_imzml_reader(pw, imzml_path):
     def get_portable_imzml_reader(storage):
-        imzml_stream = requests.get(input_data['imzml_path'], stream=True).raw
+        imzml_stream = requests.get(imzml_path, stream=True).raw
         parser = ImzMLParser(imzml_stream, ibd_file=None)
         imzml_reader = parser.portable_spectrum_reader()
-        storage.put_object(Bucket=bucket,
-                           Key=input_data["ds_imzml_reader"],
-                           Body=pickle.dumps(imzml_reader))
-        return imzml_reader
+        imzml_cobject = storage.put_cobject(pickle.dumps(imzml_reader))
+        return imzml_reader, imzml_cobject
 
     memory_capacity_mb = 1024
     future = pw.call_async(get_portable_imzml_reader, [])
@@ -54,7 +52,7 @@ def get_spectra(ibd_url, imzml_reader, sp_inds):
         yield sp_idx, mzs, ints
 
 
-def chunk_spectra(pw, config, input_data, imzml_reader):
+def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
     MAX_CHUNK_SIZE = 512 * 1024 ** 2  # 512MB
 
     sp_id_to_idx = get_pixel_indices(imzml_reader.coordinates)
@@ -81,16 +79,15 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
         if chunk_sp_inds:
             yield np.array(chunk_sp_inds)
 
-    def upload_chunk(storage, ch_i):
+    def upload_chunk(ch_i, storage):
         chunk_sp_inds = chunks[ch_i]
         # Get imzml_reader from COS because it's too big to include via pywren captured vars
-        imzml_reader = pickle.loads(read_object_with_retry(storage, config["storage"]["ds_bucket"],
-                                              input_data["ds_imzml_reader"]))
+        imzml_reader = pickle.loads(storage.get_cobject(imzml_cobject))
         n_spectra = sum(imzml_reader.mzLengths[sp_i] for sp_i in chunk_sp_inds)
         sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
 
         chunk_start = 0
-        for sp_i, mzs, ints in get_spectra(input_data['ibd_path'], imzml_reader, chunk_sp_inds):
+        for sp_i, mzs, ints in get_spectra(ibd_path, imzml_reader, chunk_sp_inds):
             chunk_end = chunk_start + len(mzs)
             sp_mz_int_buf[chunk_start:chunk_end, 0] = sp_id_to_idx[sp_i]
             sp_mz_int_buf[chunk_start:chunk_end, 1] = mzs

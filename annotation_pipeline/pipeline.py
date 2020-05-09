@@ -44,11 +44,15 @@ class Pipeline(object):
         self.run_fdr()
 
     def load_ds(self):
-        self.imzml_reader = get_imzml_reader(self.pywren_executor,
-                                             self.config["storage"]["ds_bucket"],
-                                             self.input_config_ds)
+        imzml_cache_path = f'{self.cache_path}/load_ds.cache'
 
-        logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
+        if Path(imzml_cache_path).exists():
+            self.imzml_reader, self.imzml_cobject = load_from_cache(imzml_cache_path)
+            logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
+        else:
+            self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.input_config_ds['imzml_path'])
+            logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
+            save_to_cache((self.imzml_reader, self.imzml_cobject), imzml_cache_path)
 
     def split_ds(self):
         ds_chunks_cache_path = f'{self.cache_path}/split_ds.cache'
@@ -57,7 +61,8 @@ class Pipeline(object):
             self.ds_chunks_cobjects = load_from_cache(ds_chunks_cache_path)
             logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
         else:
-            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
+            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.input_config_ds['ibd_path'],
+                                                    self.imzml_cobject, self.imzml_reader)
             logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
             save_to_cache(self.ds_chunks_cobjects, ds_chunks_cache_path)
 
@@ -180,6 +185,7 @@ class Pipeline(object):
 
     def clean(self):
         cobjects_to_clean = []
+        cobjects_to_clean.append(self.imzml_cobject)
         cobjects_to_clean.extend(self.ds_chunks_cobjects)
         cobjects_to_clean.extend(self.ds_segms_cobjects)
         cobjects_to_clean.extend(self.clip_centr_chunks_cobjects)

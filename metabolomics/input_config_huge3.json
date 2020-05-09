@@ -3,7 +3,6 @@
     "name": "X089-Mousebrain",
     "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/X089-Mousebrain/X089-Mousebrain_842x603_12um_A25__DB.imzml",
     "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/X089-Mousebrain/X089-Mousebrain_842x603_12um_A25__DB.ibd",
-    "ds_imzml_reader": "metabolomics/tmp/imzml_reader/X089-Mousebrain.pickle",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.001238,
