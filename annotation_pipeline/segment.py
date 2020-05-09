@@ -173,9 +173,9 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
             return storage.put_cobject(msgpack.dumps(segm))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            segms_cobjects = list(pool.map(_first_level_segment_upload, range(len(ds_segments_bounds))))
+            sub_segms_cobjects = list(pool.map(_first_level_segment_upload, range(len(ds_segments_bounds))))
 
-        return segms_cobjects
+        return sub_segms_cobjects
 
     memory_safe_mb = 1024
     memory_capacity_mb = first_level_segm_size_mb * 2 + memory_safe_mb
@@ -229,8 +229,8 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
     return ds_segms_cobjects, ds_segms_len
 
 
-def clip_centr_df(pw, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_min, mz_max):
-    def clip_centr_df_chunk(obj, id, storage):
+def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
+    def clip_centr_df_chunk(obj, storage):
         print(f'Clipping centroids dataframe chunk {obj.key}')
         centroids_df_chunk = pd.read_msgpack(obj.data_stream._raw_stream).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
@@ -238,32 +238,32 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, clip_centr_chunk_prefix, mz_m
         ds_mz_range_unique_formulas = centroids_df_chunk[(mz_min < centroids_df_chunk.mz) &
                                                          (centroids_df_chunk.mz < mz_max)].index.unique()
         centr_df_chunk = centroids_df_chunk[centroids_df_chunk.index.isin(ds_mz_range_unique_formulas)].reset_index()
-        storage.put_object(Bucket=bucket,
-                           Key=f'{clip_centr_chunk_prefix}/{id}.msgpack',
-                           Body=centr_df_chunk.to_msgpack())
+        clip_centr_chunk_cobject = storage.put_cobject(centr_df_chunk.to_msgpack())
 
-        return centr_df_chunk.shape[0]
+        return clip_centr_chunk_cobject, centr_df_chunk.shape[0]
 
     memory_capacity_mb = 512
     futures = pw.map(clip_centr_df_chunk, f'cos://{bucket}/{centr_chunks_prefix}/', runtime_memory=memory_capacity_mb)
-    centr_n = sum(pw.get_result(futures))
+    clip_centr_chunks_cobjects, centr_n = list(zip(*pw.get_result(futures)))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
 
+    clip_centr_chunks_cobjects = list(clip_centr_chunks_cobjects)
+    centr_n = sum(centr_n)
     logger.info(f'Prepared {centr_n} centroids')
-    return centr_n
+    return clip_centr_chunks_cobjects, centr_n
 
 
-def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_n, ds_segm_size_mb):
+def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds_segm_size_mb):
     logger.info('Defining centroids segments bounds')
 
-    def get_first_peak_mz(obj):
-        print(f'Extracting first peak mz values from clipped centroids dataframe {obj.key}')
-        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
+    def get_first_peak_mz(cobject, id, storage):
+        print(f'Extracting first peak mz values from clipped centroids dataframe {id}')
+        centr_df = pd.read_msgpack(storage.get_cobject(cobject))
         first_peak_df = centr_df[centr_df.peak_i == 0]
         return first_peak_df.mz.values
 
     memory_capacity_mb = 512
-    futures = pw.map(get_first_peak_mz, f'cos://{bucket}/{clip_centr_chunk_prefix}/', runtime_memory=memory_capacity_mb)
+    futures = pw.map(get_first_peak_mz, clip_centr_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
@@ -279,7 +279,7 @@ def define_centr_segments(pw, bucket, clip_centr_chunk_prefix, centr_n, ds_segm_
     return centr_segm_lower_bounds
 
 
-def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, centr_segm_lower_bounds):
+def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
     centr_segm_n = len(centr_segm_lower_bounds)
     centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
 
@@ -295,58 +295,65 @@ def segment_centroids(pw, bucket, clip_centr_chunk_prefix, centr_segm_prefix, ce
         centr_segm_df = pd.merge(centr_df, first_peak_df[['formula_i', 'segm_i']], on='formula_i').sort_values('mz')
         return centr_segm_df
 
-    def segment_centr_chunk(obj, id, storage):
-        print(f'Segmenting clipped centroids dataframe chunk {obj.key}')
-        centr_df = pd.read_msgpack(obj.data_stream._raw_stream)
+    def segment_centr_chunk(cobject, id, storage):
+        print(f'Segmenting clipped centroids dataframe chunk {id}')
+        centr_df = pd.read_msgpack(storage.get_cobject(cobject))
         centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
 
         def _first_level_upload(args):
             segm_i, df = args
-            storage.put_object(Bucket=bucket,
-                               Key=f'{centr_segm_prefix}/chunk/{segm_i}/{id}.msgpack',
-                               Body=df.to_msgpack())
+            return segm_i, storage.put_cobject(df.to_msgpack())
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            pool.map(_first_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
+            sub_segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
+            sub_segms_cobjects = list(pool.map(_first_level_upload, sub_segms))
+
+        return dict(sub_segms_cobjects)
 
     memory_capacity_mb = 512
-    first_futures = pw.map(segment_centr_chunk, f'cos://{bucket}/{clip_centr_chunk_prefix}/', runtime_memory=memory_capacity_mb)
-    pw.get_result(first_futures)
+    first_futures = pw.map(segment_centr_chunk, clip_centr_chunks_cobjects, runtime_memory=memory_capacity_mb)
+    first_level_segms_cobjects = pw.get_result(first_futures)
     append_pywren_stats(first_futures, memory_mb=memory_capacity_mb,
                         plus_objects=len(first_futures) * len(centr_segm_lower_bounds))
 
-    def merge_centr_df_segments(segm_i, storage):
-        print(f'Merging segment {segm_i} clipped centroids chunks')
+    def merge_centr_df_segments(segm_cobjects, id, storage):
+        print(f'Merging segment {id} clipped centroids chunks')
 
-        keys = list_keys(bucket, f'{centr_segm_prefix}/chunk/{segm_i}/', storage)
-
-        def _merge(key):
-            segm_centr_df_chunk = read_object_with_retry(storage, bucket, key, pd.read_msgpack)
+        def _merge(cobject):
+            segm_centr_df_chunk = pd.read_msgpack(storage.get_cobject(cobject))
             return segm_centr_df_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            segm = pd.concat(list(pool.map(_merge, keys)))
+            segm = pd.concat(list(pool.map(_merge, segm_cobjects)))
             del segm['segm_i']
 
-        clean_from_cos(None, bucket, f'{centr_segm_prefix}/chunk/{segm_i}/', storage)
-        centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[segm_i])
+        centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[id])
 
         def _second_level_upload(args):
             segm_j, df = args
-            base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:segm_i]])
-            id = base_id + segm_j
-            print(f'Storing centroids segment {id}')
-            storage.put_object(Bucket=bucket,
-                               Key=f'{centr_segm_prefix}/{id}.msgpack',
-                               Body=df.to_msgpack())
+            base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:id]])
+            segm_i = base_id + segm_j
+            print(f'Storing centroids segment {segm_i}')
+            return storage.put_cobject(df.to_msgpack())
 
-        with ThreadPoolExecutor(max_workers=128) as pool:
-            pool.map(_second_level_upload, [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')])
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
+            segms_cobjects = list(pool.map(_second_level_upload, segms))
+
+        return segms_cobjects
+
+    from collections import defaultdict
+    second_level_segms_cobjects = defaultdict(list)
+    for sub_segms_cobjects in first_level_segms_cobjects:
+        for first_level_segm_i in sub_segms_cobjects:
+            second_level_segms_cobjects[first_level_segm_i].append(sub_segms_cobjects[first_level_segm_i])
+    second_level_segms_cobjects = sorted(second_level_segms_cobjects.items(), key=lambda x: x[0])
+    second_level_segms_cobjects = [[cobjects] for segm_i, cobjects in second_level_segms_cobjects]
 
     memory_capacity_mb = 1024
-    second_futures = pw.map(merge_centr_df_segments, range(len(centr_segm_lower_bounds)), runtime_memory=memory_capacity_mb)
-    pw.get_result(second_futures)
+    second_futures = pw.map(merge_centr_df_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
+    db_segms_cobjects = list(np.concatenate(pw.get_result(second_futures)))
     append_pywren_stats(second_futures, memory_mb=memory_capacity_mb,
                         plus_objects=centr_segm_n, minus_objects=len(first_futures) * len(centr_segm_lower_bounds))
 
-    return centr_segm_n
+    return db_segms_cobjects

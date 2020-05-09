@@ -176,13 +176,10 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
     compute_metrics = make_compute_image_metrics(sample_area_mask, nrows, ncols, image_gen_config)
     ppm = image_gen_config['ppm']
 
-    def process_centr_segment(obj, storage):
-        print(f'Reading centroids segment {obj.key}')
+    def process_centr_segment(db_segm_cobject, id, storage):
+        print(f'Reading centroids segment {id}')
         # read database relevant part
-        try:
-            centr_df = pd.read_msgpack(obj.data_stream)
-        except:
-            centr_df = read_object_with_retry(storage, obj.bucket, obj.key, pd.read_msgpack)
+        centr_df = pd.read_msgpack(storage.get_cobject(db_segm_cobject))
 
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
@@ -201,7 +198,7 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
         formula_image_metrics(formula_images_it, compute_metrics, images_manager)
         images_cloud_objs = images_manager.finish()
 
-        print(f'Centroids segment {obj.key} finished')
+        print(f'Centroids segment {id} finished')
         formula_metrics_df = pd.DataFrame.from_dict(images_manager.formula_metrics, orient='index')
         formula_metrics_df.index.name = 'formula_i'
         return formula_metrics_df, images_cloud_objs

@@ -66,17 +66,16 @@ class Pipeline(object):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["clipped_centroids_chunks"])
-        self.centr_n = clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                     self.input_config_db["centroids_chunks"], self.input_config_db["clipped_centroids_chunks"],
-                                     mz_min, mz_max)
+        self.clip_centr_chunks_cobjects, self.centr_n = \
+            clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
+                          self.input_config_db["centroids_chunks"], mz_min, mz_max)
 
         clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["centroids_segments"])
-        self.centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                                             self.input_config_db["clipped_centroids_chunks"], self.centr_n,
-                                                             self.ds_segm_n, self.ds_segm_size_mb)
-        self.centr_segm_n = segment_centroids(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                              self.input_config_db["clipped_centroids_chunks"],
-                                              self.input_config_db["centroids_segments"], self.centr_segm_lower_bounds)
+        self.centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
+                                                             self.centr_n, self.ds_segm_n, self.ds_segm_size_mb)
+        self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
+                                                   self.centr_segm_lower_bounds)
+        self.centr_segm_n = len(self.db_segms_cobjects)
         logger.info(f'Segmented centroids chunks into {self.centr_segm_n} segments')
 
     def annotate(self):
@@ -89,8 +88,7 @@ class Pipeline(object):
                                                        self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                        self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 
-        futures = self.pywren_executor.map(process_centr_segment, f'cos://{self.config["storage"]["db_bucket"]}/{self.input_config_db["centroids_segments"]}/',
-                                           runtime_memory=memory_capacity_mb)
+        futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
         formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
         self.formula_metrics_df = pd.concat(formula_metrics_list)
         self.images_cloud_objs = list(chain(*images_cloud_objs))
