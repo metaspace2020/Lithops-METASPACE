@@ -54,15 +54,12 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
         if adduct is not None:
             ranking_df = pd.DataFrame({'mol': mols, 'msm': msm}, index=formula_is)
             ranking_df = ranking_df[~ranking_df.msm.isna()]
-            key = f'{input_data["fdr_rankings"]}/{group_i}/target{ranking_i}.pickle'
         else:
             # Specific molecules don't matter in the decoy rankings, only their msm distribution
             ranking_df = pd.DataFrame({'msm': msm})
             ranking_df = ranking_df[~ranking_df.msm.isna()]
-            key = f'{input_data["fdr_rankings"]}/{group_i}/decoy{ranking_i}.pickle'
 
-        storage.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(ranking_df))
-        return id, key
+        return id, storage.put_cobject(pickle.dumps(ranking_df))
 
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
     n_decoy_rankings = input_data.get('num_decoys', len(decoy_adducts))
@@ -79,20 +76,20 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 
     memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
-    ranking_keys = [key for job_i, key in sorted(pw.get_result(futures))]
+    ranking_cobjects = [cobject for job_i, cobject in sorted(pw.get_result(futures))]
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
-    rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), key=ranking_keys)
+    rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), cobject=ranking_cobjects)
 
     return rankings_df
 
 
-def calculate_fdrs(pw, data_bucket, rankings_df):
+def calculate_fdrs(pw, rankings_df):
 
-    def run_ranking(storage, data_bucket, target_key, decoy_key):
-        target = pickle.loads(read_object_with_retry(storage, data_bucket, target_key))
-        decoy = pickle.loads(read_object_with_retry(storage, data_bucket, decoy_key))
+    def run_ranking(target_cobject, decoy_cobject, storage):
+        target = pickle.loads(storage.get_cobject(target_cobject))
+        decoy = pickle.loads(storage.get_cobject(decoy_cobject))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()
@@ -106,10 +103,10 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
         target_fdrs = target_fdrs.sort_index()
         return target_fdrs
 
-    def merge_rankings(storage, data_bucket, target_row, decoy_keys):
+    def merge_rankings(target_row, decoy_cobjects, storage):
         print("Merging rankings...")
         print(target_row)
-        rankings = [run_ranking(storage, data_bucket, target_row.key, decoy_key) for decoy_key in decoy_keys]
+        rankings = [run_ranking(target_row.cobject, decoy_cobject, storage) for decoy_cobject in decoy_cobjects]
         mols = (pd.concat(rankings)
                 .rename_axis('formula_i')
                 .reset_index()
@@ -126,7 +123,7 @@ def calculate_fdrs(pw, data_bucket, rankings_df):
         decoy_rows = group[~group.is_target]
 
         for i, target_row in target_rows.iterrows():
-            ranking_jobs.append([data_bucket, target_row, decoy_rows.key.tolist()])
+            ranking_jobs.append([target_row, decoy_rows.cobject.tolist()])
 
     memory_capacity_mb = 256
     futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=memory_capacity_mb)

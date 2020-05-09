@@ -99,7 +99,7 @@ class Pipeline(object):
     def run_fdr(self):
         self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
                                               self.input_config_ds, self.input_config_db, self.formula_metrics_df)
-        self.fdrs = calculate_fdrs(self.pywren_executor, self.config['storage']['ds_bucket'], self.rankings_df)
+        self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
 
         logger.info(f'Number of annotations at with FDR less than:')
         for fdr_step in [0.05, 0.1, 0.2, 0.5]:

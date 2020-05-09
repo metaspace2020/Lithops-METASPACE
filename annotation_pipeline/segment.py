@@ -336,7 +336,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
             print(f'Storing centroids segment {segm_i}')
             return storage.put_cobject(df.to_msgpack())
 
-        with ThreadPoolExecutor(max_workers=1) as pool:
+        with ThreadPoolExecutor(max_workers=128) as pool:
             segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
             segms_cobjects = list(pool.map(_second_level_upload, segms))
 
