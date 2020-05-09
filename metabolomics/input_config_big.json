@@ -1,11 +1,9 @@
 {
   "dataset": {
+    "name": "AZ_Rat_brains",
     "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.imzML",
     "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.ibd",
-    "ds_chunks": "metabolomics/tmp/ds_chunks/AZ_Rat_brains",
     "ds_imzml_reader": "metabolomics/tmp/imzml_reader/AZ_Rat_brains.pickle",
-    "ds_segments": "metabolomics/tmp/ds_segments",
-    "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.001238,
@@ -15,8 +13,6 @@
     "formulas_chunks": "metabolomics/db/formulas_chunks",
     "formula_to_id_chunks": "metabolomics/db/formula_to_id",
     "centroids_chunks": "metabolomics/db/centroids_chunks",
-    "clipped_centroids_chunks": "metabolomics/tmp/clipped_centroids_chunks",
-    "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
       "metabolomics/db/mol_db2.pickle",

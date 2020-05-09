@@ -1,8 +1,8 @@
 import pickle
+import shutil
 from itertools import chain
-
+from pathlib import Path
 import pywren_ibm_cloud as pywren
-
 import pandas as pd
 
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
@@ -10,7 +10,9 @@ from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader
-from annotation_pipeline.utils import clean_from_cos, append_pywren_stats, logger
+from annotation_pipeline.utils import load_from_cache, save_to_cache, append_pywren_stats, logger
+
+CACHE_DIR = 'metabolomics/cache'
 
 
 class Pipeline(object):
@@ -21,6 +23,9 @@ class Pipeline(object):
         self.input_config_ds = input_config['dataset']
         self.input_config_db = input_config['molecular_db']
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
+
+        self.cache_path = f'{CACHE_DIR}/{self.input_config_ds["name"]}'
+        Path(self.cache_path).mkdir(parents=True, exist_ok=True)
 
         self.ds_segm_size_mb = 100
         self.image_gen_config = {
@@ -46,62 +51,94 @@ class Pipeline(object):
         logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
 
     def split_ds(self):
-        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_chunks"])
-        self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
+        ds_chunks_cache_path = f'{self.cache_path}/split_ds.cache'
+
+        if Path(ds_chunks_cache_path).exists():
+            self.ds_chunks_cobjects = load_from_cache(ds_chunks_cache_path)
+            logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
+        else:
+            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.config, self.input_config_ds, self.imzml_reader)
+            logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
+            save_to_cache(self.ds_chunks_cobjects, ds_chunks_cache_path)
 
     def segment_ds(self):
-        clean_from_cos(self.config, self.config["storage"]["ds_bucket"], self.input_config_ds["ds_segments"])
-        sample_sp_n = 1000
-        self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
-                                                     self.input_config_ds["ibd_path"],
-                                                     self.config["storage"]["ds_bucket"],
-                                                     self.input_config_ds["ds_imzml_reader"],
-                                                     self.ds_segm_size_mb, sample_sp_n)
-        self.ds_segms_cobjects, self.ds_segms_len = \
-            segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
+        ds_segments_cache_path = f'{self.cache_path}/segment_ds.cache'
+
+        if Path(ds_segments_cache_path).exists():
+            self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
+                load_from_cache(ds_segments_cache_path)
+            logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
+        else:
+            sample_sp_n = 1000
+            self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
+                                                         self.input_config_ds["ibd_path"],
+                                                         self.config["storage"]["ds_bucket"],
+                                                         self.input_config_ds["ds_imzml_reader"],
+                                                         self.ds_segm_size_mb, sample_sp_n)
+            self.ds_segms_cobjects, self.ds_segms_len = \
+                segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
+            logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
+            save_to_cache((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_path)
+
         self.ds_segm_n = len(self.ds_segms_cobjects)
-        logger.info(f'Segmented dataset chunks into {self.ds_segm_n} segments')
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
+        db_segments_cache_path = f'{self.cache_path}/segment_centroids.cache'
 
-        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["clipped_centroids_chunks"])
-        self.clip_centr_chunks_cobjects, self.centr_n = \
-            clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
-                          self.input_config_db["centroids_chunks"], mz_min, mz_max)
+        if Path(db_segments_cache_path).exists():
+            self.clip_centr_chunks_cobjects, self.db_segms_cobjects = load_from_cache(db_segments_cache_path)
+            logger.info(f'Loaded {len(self.db_segms_cobjects)} centroids segments from cache')
+        else:
+            self.clip_centr_chunks_cobjects, centr_n = \
+                clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
+                              self.input_config_db["centroids_chunks"], mz_min, mz_max)
+            centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
+                                                                 centr_n, self.ds_segm_n, self.ds_segm_size_mb)
+            self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
+                                                       centr_segm_lower_bounds)
+            logger.info(f'Segmented centroids chunks into {len(self.db_segms_cobjects)} segments')
+            save_to_cache((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_path)
 
-        clean_from_cos(self.config, self.config["storage"]["db_bucket"], self.input_config_db["centroids_segments"])
-        self.centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
-                                                             self.centr_n, self.ds_segm_n, self.ds_segm_size_mb)
-        self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
-                                                   self.centr_segm_lower_bounds)
         self.centr_segm_n = len(self.db_segms_cobjects)
-        logger.info(f'Segmented centroids chunks into {self.centr_segm_n} segments')
 
     def annotate(self):
-        logger.info('Annotating...')
-        if self.ds_segm_n * self.ds_segm_size_mb > 5000:
-            memory_capacity_mb = 4096
+        annotations_cache_path = f'{self.cache_path}/annotate.cache'
+
+        if Path(annotations_cache_path).exists():
+            self.formula_metrics_df, self.images_cloud_objs = load_from_cache(annotations_cache_path)
+            logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
-            memory_capacity_mb = 2048
-        process_centr_segment = create_process_segment(self.ds_segms_cobjects,
-                                                       self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
-                                                       self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
+            logger.info('Annotating...')
+            if self.ds_segm_n * self.ds_segm_size_mb > 5000:
+                memory_capacity_mb = 4096
+            else:
+                memory_capacity_mb = 2048
+            process_centr_segment = create_process_segment(self.ds_segms_cobjects,
+                                                           self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
+                                                           self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
 
-        futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
-        formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
-        self.formula_metrics_df = pd.concat(formula_metrics_list)
-        self.images_cloud_objs = list(chain(*images_cloud_objs))
-        append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
-
-        logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
+            futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
+            formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
+            self.formula_metrics_df = pd.concat(formula_metrics_list)
+            self.images_cloud_objs = list(chain(*images_cloud_objs))
+            append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
+            logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
+            save_to_cache((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_path)
 
     def run_fdr(self):
-        self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                              self.input_config_ds, self.input_config_db, self.formula_metrics_df)
-        self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
+        fdrs_cache_path = f'{self.cache_path}/run_fdr.cache'
 
-        logger.info(f'Number of annotations at with FDR less than:')
+        if Path(fdrs_cache_path).exists():
+            self.rankings_df, self.fdrs = load_from_cache(fdrs_cache_path)
+            logger.info('Loaded fdrs from cache')
+        else:
+            self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
+                                                  self.input_config_ds, self.input_config_db, self.formula_metrics_df)
+            self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
+            save_to_cache((self.rankings_df, self.fdrs), fdrs_cache_path)
+
+        logger.info('Number of annotations at with FDR less than:')
         for fdr_step in [0.05, 0.1, 0.2, 0.5]:
             logger.info(f'{fdr_step*100:2.0f}%: {(self.fdrs.fdr < fdr_step).sum()}')
 
@@ -142,5 +179,14 @@ class Pipeline(object):
         return checked_results
 
     def clean(self):
-        self.pywren_executor.clean()
+        cobjects_to_clean = []
+        cobjects_to_clean.extend(self.ds_chunks_cobjects)
+        cobjects_to_clean.extend(self.ds_segms_cobjects)
+        cobjects_to_clean.extend(self.clip_centr_chunks_cobjects)
+        cobjects_to_clean.extend(self.db_segms_cobjects)
+        cobjects_to_clean.extend(self.images_cloud_objs)
+        cobjects_to_clean.extend(self.rankings_df.cobject.tolist())
 
+        self.pywren_executor.clean(cs=cobjects_to_clean)
+        shutil.rmtree(self.cache_path)
+        logger.info(f'Cleaned {len(cobjects_to_clean)} cloud objects')

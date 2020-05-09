@@ -7,8 +7,8 @@ import sys
 import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
-from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, list_keys, \
-    clean_from_cos, read_object_with_retry, read_ranges_from_url
+from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, read_object_with_retry, \
+    read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -114,7 +114,6 @@ def chunk_spectra(pw, config, input_data, imzml_reader):
     ds_chunks_cobjects = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(chunks))
 
-    logger.info(f'Uploaded {len(chunks)} dataset chunks')
     return ds_chunks_cobjects
 
 
@@ -142,7 +141,6 @@ def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sa
     future = pw.call_async(get_segm_bounds, [], runtime_memory=memory_capacity_mb)
     ds_segments = pw.get_result(future)
     append_pywren_stats(future, memory_mb=memory_capacity_mb)
-    logger.info(f'Generated {len(ds_segments)} dataset bounds: {ds_segments[0]}...{ds_segments[-1]}')
     return ds_segments
 
 

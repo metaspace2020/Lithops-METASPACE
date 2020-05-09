@@ -1,11 +1,9 @@
 {
   "dataset": {
+    "name": "Brain02_Bregma1-42_02",
     "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.imzML",
     "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.ibd",
-    "ds_chunks": "metabolomics/tmp/ds_chunks/Brain02_Bregma1-42_02",
     "ds_imzml_reader": "metabolomics/tmp/imzml_reader/Brain02_Bregma1-42_02.pickle",
-    "ds_segments": "metabolomics/tmp/ds_segments",
-    "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.000693,
@@ -15,8 +13,6 @@
     "formulas_chunks": "metabolomics/db/formulas_chunks",
     "formula_to_id_chunks": "metabolomics/db/formula_to_id",
     "centroids_chunks": "metabolomics/db/centroids_chunks",
-    "clipped_centroids_chunks": "metabolomics/tmp/clipped_centroids_chunks",
-    "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
       "metabolomics/db/mol_db2.pickle"

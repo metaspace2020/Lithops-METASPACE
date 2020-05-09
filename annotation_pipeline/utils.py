@@ -7,6 +7,7 @@ import ibm_boto3
 import ibm_botocore
 import pandas as pd
 import csv
+import pickle
 
 import requests
 
@@ -185,3 +186,11 @@ def read_ranges_from_url(url, ranges):
 
     return [request_results[request_i][request_lo:request_hi]
             for input_i, request_i, request_lo, request_hi in sorted(tasks)]
+
+
+def load_from_cache(path):
+    return pickle.load(open(path, 'rb'))
+
+
+def save_to_cache(data, path):
+    pickle.dump(data, open(path, 'wb'))
