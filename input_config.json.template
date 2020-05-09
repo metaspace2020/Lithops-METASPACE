@@ -2,10 +2,6 @@
   "dataset": {
     "imzml_path": "****.imzML",
     "ibd_path": "****.ibd",
-    "ds_chunks": "metabolomics/tmp/ds_chunks",
-    "ds_imzml_reader": "****.pickle",
-    "ds_segments": "metabolomics/tmp/ds_segments",
-    "fdr_rankings": "metabolomics/tmp/fdr",
     "num_decoys": 20,
     "polarity": "+",
     "isocalc_sigma": 0.00123792863514,
@@ -14,8 +10,6 @@
   "molecular_db": {
     "formulas_chunks": "metabolomics/db/formulas_chunks",
     "centroids_chunks": "metabolomics/db/centroids_chunks",
-    "clipped_centroids_chunks": "metabolomics/tmp/clipped_centroids_chunks",
-    "centroids_segments": "metabolomics/tmp/centroids_segments",
     "databases": [
       "metabolomics/db/mol_db1.pickle",
       "metabolomics/db/mol_db2.pickle",
