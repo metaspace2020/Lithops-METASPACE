@@ -33,11 +33,11 @@ def build_database(config, input_db):
         m.update(formula.encode('utf-8'))
         return int(m.hexdigest(), 16) % N_HASH_SEGMENTS
 
-    def generate_formulas(adduct, ibm_cos):
+    def generate_formulas(adduct, storage):
         print(f'Generating formulas for adduct {adduct}')
 
         def _get_mols(mols_key):
-            return pickle.loads(read_object_with_retry(ibm_cos, bucket, mols_key))
+            return pickle.loads(read_object_with_retry(storage, bucket, mols_key))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             mols_list = list(pool.map(_get_mols, databases))
@@ -60,7 +60,7 @@ def build_database(config, input_db):
                 formulas_segments[segm_i] = [formula]
 
         def _store(segm_i):
-            ibm_cos.put_object(Bucket=bucket,
+            storage.put_object(Bucket=bucket,
                                Key=f'{formulas_chunks_prefix}/chunk/{segm_i}/{adduct}.pickle',
                                Body=pickle.dumps(formulas_segments[segm_i]))
 
@@ -76,22 +76,22 @@ def build_database(config, input_db):
     segments_n = list(set().union(*pw.get_result(futures)))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(adducts) * len(segments_n))
 
-    def deduplicate_formulas_segment(segm_i, ibm_cos, clean=True):
+    def deduplicate_formulas_segment(segm_i, storage, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
-        keys = list_keys(bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
+        keys = list_keys(bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', storage)
 
         segm = set()
         for key in keys:
-            segm_formulas_chunk = pickle.loads(read_object_with_retry(ibm_cos, bucket, key))
+            segm_formulas_chunk = pickle.loads(read_object_with_retry(storage, bucket, key))
             segm.update(segm_formulas_chunk)
 
         if clean:
-            clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', ibm_cos)
+            clean_from_cos(config, bucket, f'{formulas_chunks_prefix}/chunk/{segm_i}/', storage)
 
         return segm
 
-    def get_formulas_number_per_chunk(segm_i, ibm_cos):
-        segm = deduplicate_formulas_segment(segm_i, ibm_cos, clean=False)
+    def get_formulas_number_per_chunk(segm_i, storage):
+        segm = deduplicate_formulas_segment(segm_i, storage, clean=False)
         return len(segm)
 
     pw = pywren.ibm_cf_executor(config=config)
@@ -100,15 +100,15 @@ def build_database(config, input_db):
     formulas_nums = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
-    def store_formulas_segment(segm_i, ibm_cos):
-        segm = deduplicate_formulas_segment(segm_i, ibm_cos)
+    def store_formulas_segment(segm_i, storage):
+        segm = deduplicate_formulas_segment(segm_i, storage)
         formula_i_start = sum(formulas_nums[:segm_i])
         formula_i_end = formula_i_start + len(segm)
         segm = pd.DataFrame(sorted(segm),
                             columns=['formula'],
                             index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
 
-        ibm_cos.put_object(Bucket=bucket,
+        storage.put_object(Bucket=bucket,
                            Key=f'{formulas_chunks_prefix}_fdr/{segm_i}.msgpack',
                            Body=segm.to_msgpack())
 
@@ -119,7 +119,7 @@ def build_database(config, input_db):
         def _store(segm_j):
             id = segm_i * n_threads + segm_j
             print(f'Storing formulas segment {id}')
-            ibm_cos.put_object(Bucket=bucket,
+            storage.put_object(Bucket=bucket,
                                Key=f'{formulas_chunks_prefix}/{id}.msgpack',
                                Body=segm_list[segm_j].to_msgpack())
 
@@ -145,14 +145,14 @@ def build_database(config, input_db):
     formula_to_id_chunk_mb = 512
     N_FORMULA_TO_ID = int(math.ceil(formulas_bytes / (formula_to_id_chunk_mb * 1024 ** 2)))
 
-    def store_formula_to_id_chunk(ch_i, ibm_cos):
+    def store_formula_to_id_chunk(ch_i, storage):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
         start_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * ch_i
         end_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * (ch_i + 1)
         keys = [f'{formulas_chunks_prefix}/{formulas_chunk}.msgpack' for formulas_chunk in range(start_id, end_id)]
 
         def _get(key):
-            formula_chunk = read_object_with_retry(ibm_cos, bucket, key, pd.read_msgpack)
+            formula_chunk = read_object_with_retry(storage, bucket, key, pd.read_msgpack)
             formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
             return formula_to_id_chunk
 
@@ -163,7 +163,7 @@ def build_database(config, input_db):
         for chunk_dict in results:
             formula_to_id.update(chunk_dict)
 
-        ibm_cos.put_object(Bucket=bucket,
+        storage.put_object(Bucket=bucket,
                            Key=f'{formula_to_id_chunks_prefix}/{ch_i}.msgpack',
                            Body=msgpack.dumps(formula_to_id))
 
@@ -191,7 +191,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
         else:
             return []
 
-    def calculate_peaks_chunk(obj, id, ibm_cos):
+    def calculate_peaks_chunk(obj, id, storage):
         print(f'Calculating peaks from formulas chunk {obj.key}')
         chunk_df = pd.read_msgpack(obj.data_stream._raw_stream)
         peaks = [peak for formula_i, formula in chunk_df.formula.items()
@@ -201,7 +201,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
 
         print(f'Storing centroids chunk {id}')
         centroids_chunk_key = f'{centroids_chunks_prefix}/{id}.msgpack'
-        ibm_cos.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
+        storage.put_object(Bucket=bucket, Key=centroids_chunk_key, Body=peaks_df.to_msgpack())
 
         return peaks_df.shape[0]
 
@@ -218,7 +218,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
 
     pw = pywren.ibm_cf_executor(config=config)
     memory_capacity_mb = 2048
-    futures = pw.map(calculate_peaks_chunk, f'{bucket}/{formulas_chunks_prefix}/', runtime_memory=memory_capacity_mb)
+    futures = pw.map(calculate_peaks_chunk, f'cos://{bucket}/{formulas_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     centroids_chunks_n = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
 
