@@ -114,9 +114,9 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
     return ds_chunks_cobjects
 
 
-def define_ds_segments(pw, ibd_url, bucket, ds_imzml_reader, ds_segm_size_mb, sample_n):
+def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
     def get_segm_bounds(storage):
-        imzml_reader = pickle.loads(read_object_with_retry(storage, bucket, ds_imzml_reader))
+        imzml_reader = pickle.loads(storage.get_cobject(imzml_cobject))
         sp_n = len(imzml_reader.coordinates)
         sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
         print(f'Sampling {len(sample_sp_inds)} spectra')

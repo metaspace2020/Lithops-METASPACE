@@ -75,11 +75,8 @@ class Pipeline(object):
             logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
         else:
             sample_sp_n = 1000
-            self.ds_segments_bounds = define_ds_segments(self.pywren_executor,
-                                                         self.input_config_ds["ibd_path"],
-                                                         self.config["storage"]["ds_bucket"],
-                                                         self.input_config_ds["ds_imzml_reader"],
-                                                         self.ds_segm_size_mb, sample_sp_n)
+            self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.input_config_ds["ibd_path"],
+                                                         self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
             self.ds_segms_cobjects, self.ds_segms_len = \
                 segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
             logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
