@@ -98,7 +98,7 @@ def get_pixel_indices(coordinates):
     return pixel_indices
 
 
-def append_pywren_stats(futures, memory_mb, plus_objects=0, minus_objects=0):
+def append_pywren_stats(futures, memory_mb, cloud_objects_n=0):
     if type(futures) != list:
         futures = [futures]
 
@@ -108,10 +108,10 @@ def append_pywren_stats(futures, memory_mb, plus_objects=0, minus_objects=0):
 
     actions_num = len(futures)
     func_name = futures[0].function_name
-    runtimes = [future._call_status['exec_time'] for future in futures]
+    runtimes = [future.stats['exec_time'] for future in futures]
     cost = calc_cost(runtimes, memory_mb / 1024)
-    headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', '+Objects', '-Objects']
-    content = [func_name, actions_num, memory_mb, np.average(runtimes), cost, plus_objects, minus_objects]
+    headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
+    content = [func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]
 
     Path('logs').mkdir(exist_ok=True)
     if not Path(STATUS_PATH).exists():
@@ -145,6 +145,25 @@ def read_object_with_retry(storage, bucket, key, stream_reader=None):
             return data
         except Exception as ex:
             print(f'Exception reading {key} (attempt {attempt}): ', ex)
+            last_exception = ex
+    raise last_exception
+
+
+def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
+    last_exception = None
+    for attempt in range(1, 4):
+        try:
+            print(f'Reading {cobject.key} (attempt {attempt})')
+            data_stream = storage.get_cobject(cobject, stream=True)
+            if stream_reader:
+                data = stream_reader(data_stream)
+            else:
+                data = data_stream.read()
+            length = getattr(data_stream, '_amount_read', 'Unknown')
+            print(f'Reading {cobject.key} (attempt {attempt}) - Success ({length} bytes)')
+            return data
+        except Exception as ex:
+            print(f'Exception reading {cobject.key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
 

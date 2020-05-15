@@ -5,7 +5,7 @@ from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-from annotation_pipeline.utils import ds_dims, get_pixel_indices, read_object_with_retry
+from annotation_pipeline.utils import ds_dims, get_pixel_indices, read_cloud_object_with_retry
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 from annotation_pipeline.segment import ISOTOPIC_PEAK_N
 
@@ -116,7 +116,7 @@ def read_ds_segments(first_segm_i, last_segm_i, ds_segms_cobjects, ds_segms_len,
         raise Exception(f'There isn\'t enough memory to read dataset segments, consider increasing PyWren\'s memory for at least {read_memory_mb} mb.')
 
     def read_ds_segment(cobject):
-        data = msgpack.loads(storage.get_cobject(cobject))
+        data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
         if type(data) == list:
             sp_arr = np.concatenate(data)
         else:
@@ -179,7 +179,7 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
     def process_centr_segment(db_segm_cobject, id, storage):
         print(f'Reading centroids segment {id}')
         # read database relevant part
-        centr_df = pd.read_msgpack(storage.get_cobject(db_segm_cobject))
+        centr_df = read_cloud_object_with_retry(storage, db_segm_cobject, pd.read_msgpack)
 
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)

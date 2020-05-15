@@ -10,7 +10,8 @@ from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader
-from annotation_pipeline.utils import load_from_cache, save_to_cache, append_pywren_stats, logger
+from annotation_pipeline.utils import load_from_cache, save_to_cache, append_pywren_stats, logger, \
+    read_cloud_object_with_retry
 
 CACHE_DIR = 'metabolomics/cache'
 
@@ -124,7 +125,7 @@ class Pipeline(object):
             formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
             self.formula_metrics_df = pd.concat(formula_metrics_list)
             self.images_cloud_objs = list(chain(*images_cloud_objs))
-            append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(self.images_cloud_objs))
+            append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
             save_to_cache((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_path)
 
@@ -155,9 +156,9 @@ class Pipeline(object):
         # Only download interesting images, to prevent running out of memory
         targets = set(self.results_df.index[self.results_df.fdr <= 0.5])
 
-        def get_target_images(images_obj, storage):
+        def get_target_images(images_cobject, storage):
             images = {}
-            segm_images = pickle.loads(storage.get_cobject(images_obj))
+            segm_images = pickle.loads(read_cloud_object_with_retry(storage, images_cobject))
             for k, v in segm_images.items():
                 if k in targets:
                     images[k] = v
