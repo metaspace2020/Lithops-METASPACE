@@ -32,13 +32,13 @@ def download_dataset(imzml_url, idb_url, local_path):
     t = time()
     urllib.request.urlretrieve(imzml_url, imzml_path)
     print('DONE {:.2f} sec'.format(time() - t))
-    print(' * imzML size: {:.2f} mb'.format(Path(imzml_path).stat().st_size // (1024 ** 2)))
+    print(' * imzML size: {:.2f} mb'.format(Path(imzml_path).stat().st_size / (1024 ** 2)))
 
     print('Downloading dataset ibd...', end=' ', flush=True)
     t = time()
     urllib.request.urlretrieve(idb_url, ibd_path)
     print('DONE {:.2f} sec'.format(time() - t))
-    print(' * ibd size: {:.2f} mb'.format(Path(ibd_path).stat().st_size // (1024 ** 2)))
+    print(' * ibd size: {:.2f} mb'.format(Path(ibd_path).stat().st_size / (1024 ** 2)))
 
 
 def ds_imzml_path(ds_data_path):
@@ -161,7 +161,11 @@ def segment_dataset():
     Path(DATASET_PATH).mkdir(parents=True)
     download_dataset(IMZML_URL, IBD_URL, DATASET_PATH)
 
+    print('Loading parser...', end=' ', flush=True)
+    t = time()
     imzml_parser = ImzMLParser(ds_imzml_path(DATASET_PATH))
+    print('DONE {:.2f} sec'.format(time() - t))
+
     coordinates = [coo[:2] for coo in imzml_parser.coordinates]
     sp_n = len(coordinates)
 
