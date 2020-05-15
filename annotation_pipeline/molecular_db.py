@@ -74,7 +74,7 @@ def build_database(config, input_db):
     memory_capacity_mb = 512
     futures = pw.map(generate_formulas, adducts, runtime_memory=memory_capacity_mb)
     segments_n = list(set().union(*pw.get_result(futures)))
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(adducts) * len(segments_n))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(adducts) * len(segments_n))
 
     def deduplicate_formulas_segment(segm_i, storage, clean=True):
         print(f'Deduplicating formulas segment {segm_i}')
@@ -132,8 +132,7 @@ def build_database(config, input_db):
     memory_capacity_mb = 512
     futures = pw.map(store_formulas_segment, segments_n, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb,
-                        plus_objects=N_FORMULAS_SEGMENTS, minus_objects=len(adducts) * len(segments_n))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=N_FORMULAS_SEGMENTS)
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
@@ -172,7 +171,7 @@ def build_database(config, input_db):
     memory_capacity_mb = formula_to_id_chunk_mb * 2 + safe_mb
     futures = pw.map(store_formula_to_id_chunk, range(N_FORMULA_TO_ID), runtime_memory=memory_capacity_mb)
     pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=N_FORMULA_TO_ID)
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=N_FORMULA_TO_ID)
     logger.info(f'Built {N_FORMULA_TO_ID} formula_to_id dictionaries chunks')
 
     return num_formulas, n_formulas_chunks
@@ -220,7 +219,7 @@ def calculate_centroids(config, input_db, polarity='+', isocalc_sigma=0.001238):
     memory_capacity_mb = 2048
     futures = pw.map(calculate_peaks_chunk, f'cos://{bucket}/{formulas_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     centroids_chunks_n = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     num_centroids = sum(centroids_chunks_n)
     n_centroids_chunks = len(centroids_chunks_n)

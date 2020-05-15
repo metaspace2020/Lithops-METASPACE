@@ -6,7 +6,8 @@ import msgpack_numpy as msgpack
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
-from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry, list_keys
+from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry, read_cloud_object_with_retry, \
+    list_keys
 
 
 def _get_random_adduct_set(size, adducts, offset):
@@ -77,7 +78,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
     memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_cobjects = [cobject for job_i, cobject in sorted(pw.get_result(futures))]
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), cobject=ranking_cobjects)
@@ -88,8 +89,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
 def calculate_fdrs(pw, rankings_df):
 
     def run_ranking(target_cobject, decoy_cobject, storage):
-        target = pickle.loads(storage.get_cobject(target_cobject))
-        decoy = pickle.loads(storage.get_cobject(decoy_cobject))
+        target = pickle.loads(read_cloud_object_with_retry(storage, target_cobject))
+        decoy = pickle.loads(read_cloud_object_with_retry(storage, decoy_cobject))
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()

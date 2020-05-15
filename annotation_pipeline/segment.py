@@ -8,7 +8,7 @@ import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
 from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, read_object_with_retry, \
-    read_ranges_from_url
+    read_cloud_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
@@ -26,10 +26,10 @@ def get_imzml_reader(pw, imzml_path):
 
     memory_capacity_mb = 1024
     future = pw.call_async(get_portable_imzml_reader, [])
-    imzml_reader = pw.get_result(future)
-    append_pywren_stats(future, memory_mb=memory_capacity_mb)
+    imzml_reader, imzml_cobject = pw.get_result(future)
+    append_pywren_stats(future, memory_mb=memory_capacity_mb, cloud_objects_n=1)
 
-    return imzml_reader
+    return imzml_reader, imzml_cobject
 
 
 def get_spectra(ibd_url, imzml_reader, sp_inds):
@@ -82,7 +82,7 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
     def upload_chunk(ch_i, storage):
         chunk_sp_inds = chunks[ch_i]
         # Get imzml_reader from COS because it's too big to include via pywren captured vars
-        imzml_reader = pickle.loads(storage.get_cobject(imzml_cobject))
+        imzml_reader = pickle.loads(read_cloud_object_with_retry(storage, imzml_cobject))
         n_spectra = sum(imzml_reader.mzLengths[sp_i] for sp_i in chunk_sp_inds)
         sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
 
@@ -109,14 +109,14 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
     memory_capacity_mb = 3072
     futures = pw.map(upload_chunk, range(len(chunks)), runtime_memory=memory_capacity_mb)
     ds_chunks_cobjects = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(chunks))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(chunks))
 
     return ds_chunks_cobjects
 
 
 def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
     def get_segm_bounds(storage):
-        imzml_reader = pickle.loads(storage.get_cobject(imzml_cobject))
+        imzml_reader = pickle.loads(read_cloud_object_with_retry(storage, imzml_cobject))
         sp_n = len(imzml_reader.coordinates)
         sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
         print(f'Sampling {len(sample_sp_inds)} spectra')
@@ -158,7 +158,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
 
     def segment_spectra_chunk(chunk_cobject, id, storage):
         print(f'Segmenting spectra chunk {id}')
-        sp_mz_int_buf = msgpack.loads(storage.get_cobject(chunk_cobject))
+        sp_mz_int_buf = read_cloud_object_with_retry(storage, chunk_cobject, msgpack.load)
 
         def _first_level_segment_upload(segm_i):
             l = ds_segments_bounds[segm_i][0, 0]
@@ -177,13 +177,13 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
     first_futures = pw.map(segment_spectra_chunk, ds_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_level_segms_cobjects = pw.get_result(first_futures)
     if not isinstance(first_futures, list): first_futures = [first_futures]
-    append_pywren_stats(first_futures, memory_mb=memory_capacity_mb, plus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(first_futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(first_futures) * len(ds_segments_bounds))
 
     def merge_spectra_chunk_segments(segm_cobjects, id, storage):
         print(f'Merging segment {id} spectra chunks')
 
         def _merge(ch_i):
-            segm_spectra_chunk = msgpack.loads(storage.get_cobject(segm_cobjects[ch_i]))
+            segm_spectra_chunk = read_cloud_object_with_retry(storage, segm_cobjects[ch_i], msgpack.load)
             return segm_spectra_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -219,7 +219,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
     ds_segms_len, ds_segms_cobjects = list(zip(*pw.get_result(second_futures)))
     ds_segms_len = list(np.concatenate(ds_segms_len))
     ds_segms_cobjects = list(np.concatenate(ds_segms_cobjects))
-    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, plus_objects=ds_segm_n, minus_objects=len(first_futures) * len(ds_segments_bounds))
+    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=ds_segm_n)
 
     return ds_segms_cobjects, ds_segms_len
 
@@ -240,7 +240,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
     memory_capacity_mb = 512
     futures = pw.map(clip_centr_df_chunk, f'cos://{bucket}/{centr_chunks_prefix}/', runtime_memory=memory_capacity_mb)
     clip_centr_chunks_cobjects, centr_n = list(zip(*pw.get_result(futures)))
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, plus_objects=len(futures))
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     clip_centr_chunks_cobjects = list(clip_centr_chunks_cobjects)
     centr_n = sum(centr_n)
@@ -253,7 +253,7 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds
 
     def get_first_peak_mz(cobject, id, storage):
         print(f'Extracting first peak mz values from clipped centroids dataframe {id}')
-        centr_df = pd.read_msgpack(storage.get_cobject(cobject))
+        centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
         first_peak_df = centr_df[centr_df.peak_i == 0]
         return first_peak_df.mz.values
 
@@ -292,7 +292,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
 
     def segment_centr_chunk(cobject, id, storage):
         print(f'Segmenting clipped centroids dataframe chunk {id}')
-        centr_df = pd.read_msgpack(storage.get_cobject(cobject))
+        centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
         centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
 
         def _first_level_upload(args):
@@ -309,13 +309,13 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
     first_futures = pw.map(segment_centr_chunk, clip_centr_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_level_segms_cobjects = pw.get_result(first_futures)
     append_pywren_stats(first_futures, memory_mb=memory_capacity_mb,
-                        plus_objects=len(first_futures) * len(centr_segm_lower_bounds))
+                        cloud_objects_n=len(first_futures) * len(centr_segm_lower_bounds))
 
     def merge_centr_df_segments(segm_cobjects, id, storage):
         print(f'Merging segment {id} clipped centroids chunks')
 
         def _merge(cobject):
-            segm_centr_df_chunk = pd.read_msgpack(storage.get_cobject(cobject))
+            segm_centr_df_chunk = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
             return segm_centr_df_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -348,7 +348,6 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
     memory_capacity_mb = 1024
     second_futures = pw.map(merge_centr_df_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     db_segms_cobjects = list(np.concatenate(pw.get_result(second_futures)))
-    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb,
-                        plus_objects=centr_segm_n, minus_objects=len(first_futures) * len(centr_segm_lower_bounds))
+    append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
 
     return db_segms_cobjects
