@@ -1,4 +1,4 @@
-import urllib.request
+import requests
 from pyimzml.ImzMLParser import ImzMLParser
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
@@ -9,8 +9,8 @@ from shutil import rmtree
 
 IMZML_URL = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.imzML'
 IBD_URL = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.ibd'
-DATASET_PATH = 'ds'
-SEGMENTS_PATH = 'segms'
+DATASET_PATH = '/data/metabolomics/ds'
+SEGMENTS_PATH = '/data/metabolomics/segms'
 SEGMENT_SIZE_MB = 5
 SEGMENTS_BUCKET_NAME = 'omeruseast'
 SEGMENTS_COS_PREFIX = 'metabolomics/vm_segments'
@@ -23,22 +23,25 @@ STORAGE_CONFIG = extract_storage_config(PYWREN_CONFIG)
 STORAGE = InternalStorage(STORAGE_CONFIG).storage_handler
 
 
-def download_dataset(imzml_url, idb_url, local_path):
+def download_dataset(imzml_url, idb_url, local_path, chunk_size=1024 ** 3):
+    def _download(url, filename):
+        with requests.get(url, stream=True) as r:
+            r.raise_for_status()
+            with open(filename, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=chunk_size):
+                    f.write(chunk)
+
     Path(local_path).mkdir(exist_ok=True)
     imzml_path = f'{local_path}/ds.imzML'
     ibd_path = f'{local_path}/ds.ibd'
 
-    print('Downloading dataset imzML...', end=' ', flush=True)
-    t = time()
-    urllib.request.urlretrieve(imzml_url, imzml_path)
-    print('DONE {:.2f} sec'.format(time() - t))
-    print(' * imzML size: {:.2f} mb'.format(Path(imzml_path).stat().st_size / (1024 ** 2)))
+    with ThreadPoolExecutor() as ex:
+        ex.submit(_download, imzml_url, imzml_path)
+        ex.submit(_download, idb_url, ibd_path)
 
-    print('Downloading dataset ibd...', end=' ', flush=True)
-    t = time()
-    urllib.request.urlretrieve(idb_url, ibd_path)
-    print('DONE {:.2f} sec'.format(time() - t))
-    print(' * ibd size: {:.2f} mb'.format(Path(ibd_path).stat().st_size / (1024 ** 2)))
+    imzml_size = Path(imzml_path).stat().st_size / (1024 ** 2)
+    ibd_size = Path(ibd_path).stat().st_size / (1024 ** 2)
+    return imzml_size, ibd_size
 
 
 def ds_imzml_path(ds_data_path):
@@ -97,9 +100,6 @@ def parse_dataset_chunks(imzml_parser, coordinates, max_size=512 * 1024 ** 2):
 
 
 def define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=5, sample_sp_n=1000):
-    print('Defining segments bounds...', end=' ', flush=True)
-    t = time()
-
     sample_ratio = sample_sp_n / sp_n
 
     def spectra_sample_gen(imzml_parser, sample_ratio):
@@ -128,23 +128,22 @@ def define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=5, sample_sp_n=1000):
     ds_segments_bounds[0, 0] = 0
     ds_segments_bounds[-1, 1] = max_mz_value
 
-    print('DONE {:.2f} sec'.format(time() - t))
-    print(' * segments number:', segm_n)
     return ds_segments_bounds
 
 
 def segment_spectra_chunk(sp_mz_int_buf, ds_segments_bounds, ds_segments_path):
-    for segm_i, (l, r) in enumerate(ds_segments_bounds):
+    def _segment(args):
+        segm_i, (l, r) = args
         segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))
         pd.to_msgpack(f'{ds_segments_path}/ds_segm_{segm_i:04}.msgpack',
                       sp_mz_int_buf[segm_start:segm_end],
                       append=True)
 
+    with ThreadPoolExecutor() as pool:
+        pool.map(_segment, enumerate(ds_segments_bounds))
+
 
 def upload_segments(ds_segments_path, segments_n, segments_bucket_name, segments_prefix, storage):
-    print('Uploading segments...', end=' ', flush=True)
-    t = time()
-
     def _upload(segm_i):
         storage.cos_client.upload_file(Filename=f'{ds_segments_path}/ds_segm_{segm_i:04}.msgpack',
                                        Bucket=segments_bucket_name,
@@ -153,13 +152,19 @@ def upload_segments(ds_segments_path, segments_n, segments_bucket_name, segments
     with ThreadPoolExecutor() as pool:
         pool.map(_upload, range(segments_n))
 
-    print('DONE {:.2f} sec'.format(time() - t))
 
-
-def segment_dataset():
+if __name__ == '__main__':
     rmtree(DATASET_PATH, ignore_errors=True)
     Path(DATASET_PATH).mkdir(parents=True)
-    download_dataset(IMZML_URL, IBD_URL, DATASET_PATH)
+
+    start = time()
+
+    print('Downloading dataset...', end=' ', flush=True)
+    t = time()
+    imzml_size, ibd_size = download_dataset(IMZML_URL, IBD_URL, DATASET_PATH)
+    print('DONE {:.2f} sec'.format(time() - t))
+    print(' * imzML size: {:.2f} mb'.format(imzml_size))
+    print(' * ibd size: {:.2f} mb'.format(ibd_size))
 
     print('Loading parser...', end=' ', flush=True)
     t = time()
@@ -169,8 +174,12 @@ def segment_dataset():
     coordinates = [coo[:2] for coo in imzml_parser.coordinates]
     sp_n = len(coordinates)
 
+    print('Defining segments bounds...', end=' ', flush=True)
+    t = time()
     ds_segments_bounds = define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=SEGMENT_SIZE_MB)
     segments_n = len(ds_segments_bounds)
+    print('DONE {:.2f} sec'.format(time() - t))
+    print(' * segments number:', segments_n)
 
     print('Segmenting...', end=' ', flush=True)
     t = time()
@@ -180,8 +189,9 @@ def segment_dataset():
         segment_spectra_chunk(sp_mz_int_buf, ds_segments_bounds, SEGMENTS_PATH)
     print('DONE {:.2f} sec'.format(time() - t))
 
+    print('Uploading segments...', end=' ', flush=True)
+    t = time()
     upload_segments(SEGMENTS_PATH, segments_n, SEGMENTS_BUCKET_NAME, SEGMENTS_COS_PREFIX, STORAGE)
+    print('DONE {:.2f} sec'.format(time() - t))
 
-
-if __name__ == '__main__':
-    segment_dataset()
+    print('--- {:.2f} sec ---'.format(time() - start))
