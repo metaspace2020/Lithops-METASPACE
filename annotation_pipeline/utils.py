@@ -1,6 +1,5 @@
 import logging
 from concurrent.futures.thread import ThreadPoolExecutor
-from pywren_ibm_cloud.storage.utils import CloudObject
 from pathlib import Path
 from datetime import datetime
 import numpy as np
@@ -8,8 +7,6 @@ import ibm_boto3
 import ibm_botocore
 import pandas as pd
 import csv
-import pickle
-import json
 
 import requests
 
@@ -201,60 +198,3 @@ def read_ranges_from_url(url, ranges):
 
     return [request_results[request_i][request_lo:request_hi]
             for input_i, request_i, request_lo, request_hi in sorted(tasks)]
-
-
-def cache_exists(key):
-    config = json.load(open('config.json', 'r'))
-    ibm_cos = get_ibm_cos_client(config)
-    cache_bucket = config['pywren']['storage_bucket']
-    try:
-        ibm_cos.head_object(Bucket=cache_bucket, Key=key)
-        return True
-    except Exception:
-        return False
-
-
-def load_from_cache(key):
-    config = json.load(open('config.json', 'r'))
-    ibm_cos = get_ibm_cos_client(config)
-    cache_bucket = config['pywren']['storage_bucket']
-    return pickle.loads(ibm_cos.get_object(Bucket=cache_bucket, Key=key)['Body'].read())
-
-
-def get_cached_cobjects(prefix):
-    config = json.load(open('config.json', 'r'))
-    ibm_cos = get_ibm_cos_client(config)
-    cache_bucket = config['pywren']['storage_bucket']
-    keys = list_keys(cache_bucket, prefix, ibm_cos)
-
-    cached_cobjects = []
-    for cache_key in keys:
-        cache_data = load_from_cache(cache_key)
-        if isinstance(cache_data, tuple):
-            for obj in cache_data:
-                if isinstance(obj, list):
-                    if isinstance(obj[0], CloudObject):
-                        cached_cobjects.extend(obj)
-                elif isinstance(obj, CloudObject):
-                    cached_cobjects.append(obj)
-        elif isinstance(cache_data, list):
-            if isinstance(cache_data[0], CloudObject):
-                cached_cobjects.extend(cache_data)
-        elif isinstance(cache_data, CloudObject):
-            cached_cobjects.append(cache_data)
-
-    return cached_cobjects
-
-
-def save_to_cache(data, key):
-    config = json.load(open('config.json', 'r'))
-    ibm_cos = get_ibm_cos_client(config)
-    cache_bucket = config['pywren']['storage_bucket']
-    ibm_cos.put_object(Bucket=cache_bucket, Key=key, Body=pickle.dumps(data))
-
-
-def clean_cache(prefix):
-    config = json.load(open('config.json', 'r'))
-    ibm_cos = get_ibm_cos_client(config)
-    cache_bucket = config['pywren']['storage_bucket']
-    clean_from_cos(config, cache_bucket, prefix, ibm_cos)

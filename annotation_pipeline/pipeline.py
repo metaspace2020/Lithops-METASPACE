@@ -8,7 +8,7 @@ from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader
-from annotation_pipeline.utils import cache_exists, get_cached_cobjects, clean_cache, load_from_cache, save_to_cache
+from annotation_pipeline.cache import PipelineCacher
 from annotation_pipeline.utils import append_pywren_stats, logger, read_cloud_object_with_retry
 
 
@@ -22,9 +22,9 @@ class Pipeline(object):
         self.use_cache = use_cache
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
 
-        self.cache_prefix = f'metabolomics/cache/{self.input_config_ds["name"]}'
+        self.cacher = PipelineCacher(self.pywren_executor, self.input_config_ds["name"])
         if not self.use_cache:
-            self.clean()
+            self.cacher.clean()
 
         self.ds_segm_size_mb = 100
         self.image_gen_config = {
@@ -43,34 +43,34 @@ class Pipeline(object):
         self.run_fdr()
 
     def load_ds(self):
-        imzml_cache_key = f'{self.cache_prefix}/load_ds.cache'
+        imzml_cache_key = f'{self.cacher.prefix}/load_ds.cache'
 
-        if cache_exists(imzml_cache_key):
-            self.imzml_reader, self.imzml_cobject = load_from_cache(imzml_cache_key)
+        if self.cacher.exists(imzml_cache_key):
+            self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
             logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
         else:
             self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.input_config_ds['imzml_path'])
             logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
-            save_to_cache((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
+            self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
     def split_ds(self):
-        ds_chunks_cache_key = f'{self.cache_prefix}/split_ds.cache'
+        ds_chunks_cache_key = f'{self.cacher.prefix}/split_ds.cache'
 
-        if cache_exists(ds_chunks_cache_key):
-            self.ds_chunks_cobjects = load_from_cache(ds_chunks_cache_key)
+        if self.cacher.exists(ds_chunks_cache_key):
+            self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
             logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
         else:
             self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.input_config_ds['ibd_path'],
                                                     self.imzml_cobject, self.imzml_reader)
             logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
-            save_to_cache(self.ds_chunks_cobjects, ds_chunks_cache_key)
+            self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
 
     def segment_ds(self):
-        ds_segments_cache_key = f'{self.cache_prefix}/segment_ds.cache'
+        ds_segments_cache_key = f'{self.cacher.prefix}/segment_ds.cache'
 
-        if cache_exists(ds_segments_cache_key):
+        if self.cacher.exists(ds_segments_cache_key):
             self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
-                load_from_cache(ds_segments_cache_key)
+                self.cacher.load(ds_segments_cache_key)
             logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
         else:
             sample_sp_n = 1000
@@ -79,16 +79,16 @@ class Pipeline(object):
             self.ds_segms_cobjects, self.ds_segms_len = \
                 segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
             logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
-            save_to_cache((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
+            self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
 
         self.ds_segm_n = len(self.ds_segms_cobjects)
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
-        db_segments_cache_key = f'{self.cache_prefix}/segment_centroids.cache'
+        db_segments_cache_key = f'{self.cacher.prefix}/segment_centroids.cache'
 
-        if cache_exists(db_segments_cache_key):
-            self.clip_centr_chunks_cobjects, self.db_segms_cobjects = load_from_cache(db_segments_cache_key)
+        if self.cacher.exists(db_segments_cache_key):
+            self.clip_centr_chunks_cobjects, self.db_segms_cobjects = self.cacher.load(db_segments_cache_key)
             logger.info(f'Loaded {len(self.db_segms_cobjects)} centroids segments from cache')
         else:
             self.clip_centr_chunks_cobjects, centr_n = \
@@ -99,15 +99,15 @@ class Pipeline(object):
             self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
                                                        centr_segm_lower_bounds)
             logger.info(f'Segmented centroids chunks into {len(self.db_segms_cobjects)} segments')
-            save_to_cache((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_key)
+            self.cacher.save((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_key)
 
         self.centr_segm_n = len(self.db_segms_cobjects)
 
     def annotate(self):
-        annotations_cache_key = f'{self.cache_prefix}/annotate.cache'
+        annotations_cache_key = f'{self.cacher.prefix}/annotate.cache'
 
-        if cache_exists(annotations_cache_key):
-            self.formula_metrics_df, self.images_cloud_objs = load_from_cache(annotations_cache_key)
+        if self.cacher.exists(annotations_cache_key):
+            self.formula_metrics_df, self.images_cloud_objs = self.cacher.load(annotations_cache_key)
             logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
             logger.info('Annotating...')
@@ -125,19 +125,19 @@ class Pipeline(object):
             self.images_cloud_objs = list(chain(*images_cloud_objs))
             append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
-            save_to_cache((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
+            self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
 
     def run_fdr(self):
-        fdrs_cache_key = f'{self.cache_prefix}/run_fdr.cache'
+        fdrs_cache_key = f'{self.cacher.prefix}/run_fdr.cache'
 
-        if cache_exists(fdrs_cache_key):
-            self.rankings_df, self.fdrs = load_from_cache(fdrs_cache_key)
+        if self.cacher.exists(fdrs_cache_key):
+            self.rankings_df, self.fdrs = self.cacher.load(fdrs_cache_key)
             logger.info('Loaded fdrs from cache')
         else:
             self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
                                                   self.input_config_ds, self.input_config_db, self.formula_metrics_df)
             self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
-            save_to_cache((self.rankings_df, self.fdrs), fdrs_cache_key)
+            self.cacher.save((self.rankings_df, self.fdrs), fdrs_cache_key)
 
         logger.info('Number of annotations at with FDR less than:')
         for fdr_step in [0.05, 0.1, 0.2, 0.5]:
@@ -180,7 +180,4 @@ class Pipeline(object):
         return checked_results
 
     def clean(self):
-        cobjects_to_clean = get_cached_cobjects(self.cache_prefix)
-        self.pywren_executor.clean(cs=cobjects_to_clean)
-        clean_cache(self.cache_prefix)
-        logger.info(f'Cleaned {len(cobjects_to_clean)} cached cloud objects')
+        self.cacher.clean()
