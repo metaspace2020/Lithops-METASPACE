@@ -12,6 +12,9 @@ if __name__ == '__main__':
     parser.add_argument('--config', type=argparse.FileType('r'), default='config.json', help='config.json path')
     parser.add_argument('--input', type=argparse.FileType('r'), default='input_config.json',
                         help='input_config.json path')
+    parser.add_argument('--no-cache', dest='use_cache', action='store_false',
+                        help='disable loading and saving cached cloud objects')
+    parser.set_defaults(use_cache=True)
     args = parser.parse_args()
 
     start = time.time()
@@ -19,7 +22,7 @@ if __name__ == '__main__':
     config = json.load(args.config)
     input_config = json.load(args.input)
 
-    pipeline = Pipeline(config, input_config)
+    pipeline = Pipeline(config, input_config, use_cache=args.use_cache)
     pipeline()
     results_df = pipeline.get_results()
 

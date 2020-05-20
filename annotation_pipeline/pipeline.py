@@ -1,3 +1,4 @@
+import os
 import pickle
 import shutil
 from itertools import chain
@@ -13,19 +14,20 @@ from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segme
 from annotation_pipeline.utils import load_from_cache, save_to_cache, append_pywren_stats, logger, \
     read_cloud_object_with_retry
 
-CACHE_DIR = 'metabolomics/cache'
-
 
 class Pipeline(object):
 
-    def __init__(self, config, input_config):
+    def __init__(self, config, input_config, use_cache=True):
         self.config = config
         self.storage = config['storage']
         self.input_config_ds = input_config['dataset']
         self.input_config_db = input_config['molecular_db']
+        self.use_cache = use_cache
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
 
-        self.cache_path = f'{CACHE_DIR}/{self.input_config_ds["name"]}'
+        self.cache_path = f'metabolomics/cache/{self.input_config_ds["name"]}'
+        if not self.use_cache:
+            self.clean()
         Path(self.cache_path).mkdir(parents=True, exist_ok=True)
 
         self.ds_segm_size_mb = 100
@@ -53,7 +55,8 @@ class Pipeline(object):
         else:
             self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.input_config_ds['imzml_path'])
             logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
-            save_to_cache((self.imzml_reader, self.imzml_cobject), imzml_cache_path)
+            if self.use_cache:
+                save_to_cache((self.imzml_reader, self.imzml_cobject), imzml_cache_path)
 
     def split_ds(self):
         ds_chunks_cache_path = f'{self.cache_path}/split_ds.cache'
@@ -65,7 +68,8 @@ class Pipeline(object):
             self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.input_config_ds['ibd_path'],
                                                     self.imzml_cobject, self.imzml_reader)
             logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
-            save_to_cache(self.ds_chunks_cobjects, ds_chunks_cache_path)
+            if self.use_cache:
+                save_to_cache(self.ds_chunks_cobjects, ds_chunks_cache_path)
 
     def segment_ds(self):
         ds_segments_cache_path = f'{self.cache_path}/segment_ds.cache'
@@ -81,7 +85,8 @@ class Pipeline(object):
             self.ds_segms_cobjects, self.ds_segms_len = \
                 segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
             logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
-            save_to_cache((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_path)
+            if self.use_cache:
+                save_to_cache((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_path)
 
         self.ds_segm_n = len(self.ds_segms_cobjects)
 
@@ -101,7 +106,8 @@ class Pipeline(object):
             self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
                                                        centr_segm_lower_bounds)
             logger.info(f'Segmented centroids chunks into {len(self.db_segms_cobjects)} segments')
-            save_to_cache((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_path)
+            if self.use_cache:
+                save_to_cache((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_path)
 
         self.centr_segm_n = len(self.db_segms_cobjects)
 
@@ -127,7 +133,8 @@ class Pipeline(object):
             self.images_cloud_objs = list(chain(*images_cloud_objs))
             append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
-            save_to_cache((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_path)
+            if self.use_cache:
+                save_to_cache((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_path)
 
     def run_fdr(self):
         fdrs_cache_path = f'{self.cache_path}/run_fdr.cache'
@@ -139,7 +146,8 @@ class Pipeline(object):
             self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
                                                   self.input_config_ds, self.input_config_db, self.formula_metrics_df)
             self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
-            save_to_cache((self.rankings_df, self.fdrs), fdrs_cache_path)
+            if self.use_cache:
+                save_to_cache((self.rankings_df, self.fdrs), fdrs_cache_path)
 
         logger.info('Number of annotations at with FDR less than:')
         for fdr_step in [0.05, 0.1, 0.2, 0.5]:
@@ -183,14 +191,24 @@ class Pipeline(object):
 
     def clean(self):
         cobjects_to_clean = []
-        if hasattr(self, 'imzml_cobject'): cobjects_to_clean.append(self.imzml_cobject)
-        if hasattr(self, 'ds_chunks_cobjects'): cobjects_to_clean.extend(self.ds_chunks_cobjects)
-        if hasattr(self, 'ds_segms_cobjects'): cobjects_to_clean.extend(self.ds_segms_cobjects)
-        if hasattr(self, 'clip_centr_chunks_cobjects'): cobjects_to_clean.extend(self.clip_centr_chunks_cobjects)
-        if hasattr(self, 'db_segms_cobjects'): cobjects_to_clean.extend(self.db_segms_cobjects)
-        if hasattr(self, 'images_cloud_objs'): cobjects_to_clean.extend(self.images_cloud_objs)
-        if hasattr(self, 'rankings_df'): cobjects_to_clean.extend(self.rankings_df.cobject.tolist())
+
+        from pywren_ibm_cloud.storage.utils import CloudObject
+        for root, dirnames, filenames in os.walk(self.cache_path):
+            for fn in filenames:
+                cache_data = load_from_cache(f'{root}/{fn}')
+                if isinstance(cache_data, tuple):
+                    for obj in cache_data:
+                        if isinstance(obj, list):
+                            if isinstance(obj[0], CloudObject):
+                                cobjects_to_clean.extend(obj)
+                        elif isinstance(obj, CloudObject):
+                            cobjects_to_clean.append(obj)
+                elif isinstance(cache_data, list):
+                    if isinstance(cache_data[0], CloudObject):
+                        cobjects_to_clean.extend(cache_data)
+                elif isinstance(cache_data, CloudObject):
+                    cobjects_to_clean.append(cache_data)
 
         self.pywren_executor.clean(cs=cobjects_to_clean)
         shutil.rmtree(self.cache_path)
-        logger.info(f'Cleaned {len(cobjects_to_clean)} cloud objects')
+        logger.info(f'Cleaned {len(cobjects_to_clean)} cached cloud objects')
