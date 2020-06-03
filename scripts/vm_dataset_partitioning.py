@@ -10,10 +10,10 @@ from shutil import rmtree
 IMZML_URL = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.imzML'
 IBD_URL = 'https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Brain02_Bregma1-42_02/Brain02_Bregma1-42_02.ibd'
 DATASET_PATH = '/data/metabolomics/ds'
-SEGMENTS_PATH = '/data/metabolomics/segms'
+SEGMENTS_PATH = '/data/metabolomics/ds/segms'
 SEGMENT_SIZE_MB = 5
 SEGMENTS_BUCKET_NAME = 'omeruseast'
-SEGMENTS_COS_PREFIX = 'metabolomics/vm_segments'
+SEGMENTS_COS_PREFIX = 'metabolomics/vm_ds_segments'
 
 from pywren_ibm_cloud.storage import InternalStorage
 from pywren_ibm_cloud.config import default_config, extract_storage_config

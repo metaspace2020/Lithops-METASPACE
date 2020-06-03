@@ -146,8 +146,8 @@ def build_database(config, input_db):
 
     def store_formula_to_id_chunk(ch_i, storage):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
-        start_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * ch_i
-        end_id = (N_FORMULAS_SEGMENTS // N_FORMULA_TO_ID) * (ch_i + 1)
+        start_id = N_FORMULAS_SEGMENTS * ch_i // N_FORMULA_TO_ID
+        end_id = N_FORMULAS_SEGMENTS * (ch_i + 1) // N_FORMULA_TO_ID
         keys = [f'{formulas_chunks_prefix}/{formulas_chunk}.msgpack' for formulas_chunk in range(start_id, end_id)]
 
         def _get(key):
