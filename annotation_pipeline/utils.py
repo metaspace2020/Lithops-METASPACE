@@ -7,7 +7,6 @@ import ibm_boto3
 import ibm_botocore
 import pandas as pd
 import csv
-import pickle
 
 import requests
 
@@ -16,12 +15,6 @@ logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
 logger = logging.getLogger('annotation-pipeline')
-
-# handler = logging.StreamHandler()
-# format = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-# handler.setFormatter(format)
-# logger.addHandler(handler)
-# logger.setLevel(logging.INFO)
 
 STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
 
@@ -205,11 +198,3 @@ def read_ranges_from_url(url, ranges):
 
     return [request_results[request_i][request_lo:request_hi]
             for input_i, request_i, request_lo, request_hi in sorted(tasks)]
-
-
-def load_from_cache(path):
-    return pickle.load(open(path, 'rb'))
-
-
-def save_to_cache(data, path):
-    pickle.dump(data, open(path, 'wb'))
