@@ -9,11 +9,9 @@ CENTROIDS_BUCKET = 'omeruseast'
 MOL_DB_PREFIX = 'metabolomics/db/centroids_chunks'
 CENTROIDS_SEGMENTS_PREFIX = 'metabolomics/vm_db_segments'
 CENTR_SEGM_PATH = '/data/metabolomics/db/segms'
-DS_SEGMENTS = np.array([[79.99708557, 145.02574158], [145.02574158, 180.09922791], [180.09922791, 205.08337402],
-                        [205.08337402, 227.12495422], [227.12495422, 247.00369263], [247.00369263, 266.15087891],
-                        [266.15087891, 284.1260376], [284.1260376, 304.17520142], [304.17520142, 321.31515503],
-                        [321.31515503, 340.25341797], [340.25341797, 359.31045532], [359.31045532, 379.28167725],
-                        [379.28167725, 406.34417725], [406.34417725, 441.4055481], [441.4055481, 499.97909546]])
+MZ_MIN = 79.99708557
+MZ_MAX = 499.97909546
+DS_SEGMENTS_N = 15
 DS_SEGM_SIZE_MB = 100
 
 from pywren_ibm_cloud.storage import InternalStorage
@@ -44,8 +42,8 @@ def clip_centroids_df(centroids_df, mz_min, mz_max):
     return centr_df
 
 
-def calculate_centroids_segments_n(centr_df, ds_segments, ds_segm_size_mb):
-    ds_size_mb = len(ds_segments) * ds_segm_size_mb
+def calculate_centroids_segments_n(centr_df, ds_segments_n, ds_segm_size_mb):
+    ds_size_mb = ds_segments_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
     peaks_per_centr_segm = 1e4
     centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb,
@@ -88,7 +86,7 @@ if __name__ == '__main__':
     print(' * centorids:', centroids_df.shape[0])
     centroids_df = centroids_df[centroids_df.mz > 0]
 
-    mz_min, mz_max = DS_SEGMENTS[0, 0], DS_SEGMENTS[-1, 1]
+    mz_min, mz_max = MZ_MIN, MZ_MAX
     print('Clipping unrelevant centroids...', end=' ', flush=True)
     t = time()
     centr_df = clip_centroids_df(centroids_df, mz_min, mz_max)
@@ -97,7 +95,7 @@ if __name__ == '__main__':
 
     print('Defining segments number...', end=' ', flush=True)
     t = time()
-    centr_segm_n = calculate_centroids_segments_n(centr_df, DS_SEGMENTS, DS_SEGM_SIZE_MB)
+    centr_segm_n = calculate_centroids_segments_n(centr_df, DS_SEGMENTS_N, DS_SEGM_SIZE_MB)
     print('DONE {:.2f} sec'.format(time() - t))
     print(' * segments number:', centr_segm_n)
 
