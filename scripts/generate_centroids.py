@@ -10,8 +10,10 @@ logging.basicConfig(level=logging.INFO)
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Generate centroids', usage='')
     parser.add_argument('--config', type=argparse.FileType('r'), default='config.json', help='config.json path')
-    parser.add_argument('--input', type=argparse.FileType('r'), default='input_config.json',
-                        help='input_config.json path')
+    parser.add_argument('--ds', type=argparse.FileType('r'), default='metabolomics/ds_config2.json',
+                        help='ds_config.json path')
+    parser.add_argument('--db', type=argparse.FileType('r'), default='metabolomics/db_config2.json',
+                        help='db_config.json path')
     args = parser.parse_args()
 
     start = time.time()

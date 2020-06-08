@@ -1,0 +1,9 @@
+{
+    "name": "Mouse_brain",
+    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.imzML",
+    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.ibd",
+    "num_decoys": 20,
+    "polarity": "+",
+    "isocalc_sigma": 0.002476,
+    "metaspace_id": "2019-07-31_17h35m11s"
+}

@@ -14,15 +14,15 @@ from annotation_pipeline.utils import append_pywren_stats, logger, read_cloud_ob
 
 class Pipeline(object):
 
-    def __init__(self, config, input_config, use_cache=True):
+    def __init__(self, config, ds_config, db_config, use_cache=True):
         self.config = config
         self.storage = config['storage']
-        self.input_config_ds = input_config['dataset']
-        self.input_config_db = input_config['molecular_db']
+        self.ds_config = ds_config
+        self.db_config = db_config
         self.use_cache = use_cache
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
 
-        self.cacher = PipelineCacher(self.pywren_executor, self.input_config_ds["name"])
+        self.cacher = PipelineCacher(self.pywren_executor, self.ds_config["name"])
         if not self.use_cache:
             self.cacher.clean()
 
@@ -49,7 +49,7 @@ class Pipeline(object):
             self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
             logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
         else:
-            self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.input_config_ds['imzml_path'])
+            self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.ds_config['imzml_path'])
             logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
             self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
@@ -60,7 +60,7 @@ class Pipeline(object):
             self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
             logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
         else:
-            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.input_config_ds['ibd_path'],
+            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.ds_config['ibd_path'],
                                                     self.imzml_cobject, self.imzml_reader)
             logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
             self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
@@ -74,7 +74,7 @@ class Pipeline(object):
             logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
         else:
             sample_sp_n = 1000
-            self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.input_config_ds["ibd_path"],
+            self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.ds_config["ibd_path"],
                                                          self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
             self.ds_segms_cobjects, self.ds_segms_len = \
                 segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
@@ -93,7 +93,7 @@ class Pipeline(object):
         else:
             self.clip_centr_chunks_cobjects, centr_n = \
                 clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
-                              self.input_config_db["centroids_chunks"], mz_min, mz_max)
+                              self.db_config["centroids_chunks"], mz_min, mz_max)
             centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
                                                                  centr_n, self.ds_segm_n, self.ds_segm_size_mb)
             self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
@@ -135,7 +135,7 @@ class Pipeline(object):
             logger.info('Loaded fdrs from cache')
         else:
             self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                                  self.input_config_ds, self.input_config_db, self.formula_metrics_df)
+                                                  self.ds_config, self.db_config, self.formula_metrics_df)
             self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
             self.cacher.save((self.rankings_df, self.fdrs), fdrs_cache_key)
 
@@ -172,7 +172,7 @@ class Pipeline(object):
     def check_results(self):
         results_df = self.get_results()
         metaspace_options = self.config.get('metaspace_options', {})
-        reference_results = get_reference_results(metaspace_options, self.input_config_ds['metaspace_id'])
+        reference_results = get_reference_results(metaspace_options, self.ds_config['metaspace_id'])
 
         checked_results = check_results(results_df, reference_results)
 
