@@ -84,11 +84,11 @@ def log_bad_results(merged_results, missing_results, spatial_wrong, spectral_wro
         # Name, Maximum allowed, Actual value, Extra data
         ('Missing annotations', 0, len(missing_results), missing_results.head()),
         # A small number of results are off by up to 1% due to an algorithm change since they were processed
-        # Annotations with fewer than 4 ion images now have slightly higher spectral score than before
-        ('Incorrect spatial metric', 0, len(spatial_wrong), spatial_wrong.head()),
+        # Annotations with fewer than 4 ion images now have slightly higher spatial and spectral score than before
+        ('Incorrect spatial metric', 2, len(spatial_wrong), spatial_wrong.head()),
         ('Incorrect spectral metric', 5, len(spectral_wrong), spectral_wrong.head()),
         ('Incorrect chaos metric', 0, len(chaos_wrong), chaos_wrong.head()),
-        ('Incorrect MSM', 0, len(msm_wrong), msm_wrong.head()),
+        ('Incorrect MSM', 2, len(msm_wrong), msm_wrong.head()),
         # FDR can vary significantly depending on which decoy adducts were chosen.
         ('FDR changed', len(merged_results) * 0.25, len(fdr_any_error), fdr_any_error.head()),
         ('FDR changed significantly', len(merged_results) * 0.1, len(fdr_big_error), fdr_big_error.head()),
