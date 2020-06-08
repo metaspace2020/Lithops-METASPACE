@@ -1,9 +1,9 @@
 {
-    "name": "CT26_xenograft",
-    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.imzML",
-    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/CT26_xenograft/Image1_CT26.ibd",
-    "num_decoys": 20,
-    "polarity": "+",
-    "isocalc_sigma": 0.001238,
-    "metaspace_id": "2016-09-21_16h06m49s"
+  "name": "CT26_xenograft",
+  "imzml_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/Image1_/Image1_CT26.imzML",
+  "ibd_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/Image1_/Image1_CT26.ibd",
+  "num_decoys": 20,
+  "polarity": "+",
+  "isocalc_sigma": 0.001238,
+  "metaspace_id": "2016-09-21_16h06m49s"
 }

@@ -1,9 +1,9 @@
 {
-    "name": "Mouse_brain",
-    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.imzML",
-    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/Mouse_brain/Mouse brain test434x902_50um_10ps_imzML.ibd",
-    "num_decoys": 20,
-    "polarity": "+",
-    "isocalc_sigma": 0.002476,
-    "metaspace_id": "2019-07-31_17h35m11s"
+  "name": "Mouse_brain",
+  "imzml_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/f6889869-5f9a-4e34-9155-12b289c39772/Mouse+brain+test434x902_50um_10ps_imzML.imzML",
+  "ibd_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/f6889869-5f9a-4e34-9155-12b289c39772/Mouse+brain+test434x902_50um_10ps_imzML.IBD",
+  "num_decoys": 20,
+  "polarity": "+",
+  "isocalc_sigma": 0.002476,
+  "metaspace_id": "2019-07-31_17h35m11s"
 }

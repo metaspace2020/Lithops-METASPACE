@@ -1,9 +1,9 @@
 {
-    "name": "AZ_Rat_brains",
-    "imzml_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.imzML",
-    "ibd_path": "https://s3.eu-de.cloud-object-storage.appdomain.cloud/metaspace-public/metabolomics/ds/AZ_Rat_brains/Image5.ibd",
-    "num_decoys": 20,
-    "polarity": "+",
-    "isocalc_sigma": 0.001238,
-    "metaspace_id": "2016-09-21_16h06m53s"
+  "name": "AZ_Rat_brains",
+  "imzml_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/rat_brains/Image5.imzML",
+  "ibd_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/rat_brains/Image5.ibd",
+  "num_decoys": 20,
+  "polarity": "+",
+  "isocalc_sigma": 0.001238,
+  "metaspace_id": "2016-09-21_16h06m53s"
 }
