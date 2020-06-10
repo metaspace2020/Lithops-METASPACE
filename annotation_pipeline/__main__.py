@@ -14,13 +14,14 @@ logger = logging.getLogger(name='annotation_pipeline')
 
 
 def annotate(args, config):
-    input_config = json.load(args.input)
+    input_ds = json.load(args.ds)
+    input_db = json.load(args.db)
     output = Path(args.output) if not args.no_output else None
 
     if output and not output.exists():
         output.mkdir(parents=True, exist_ok=True)
 
-    pipeline = Pipeline(config, input_config)
+    pipeline = Pipeline(config, input_ds, input_db)
     pipeline()
     results_df = pipeline.get_results()
     formula_images = pipeline.get_images()
@@ -34,18 +35,17 @@ def annotate(args, config):
 
 
 def generate_centroids(args, config):
-    input_config = json.load(args.input)
-    input_db = input_config['molecular_db']
-    input_data = input_config['dataset']
+    input_ds = json.load(args.ds)
+    input_db = json.load(args.db)
 
     databases_path = Path(Path(input_db['databases'][0]).parent)
     upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], databases_path, databases_path)
 
     build_database(config, input_db)
     # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
-    polarity = input_data['polarity']
+    polarity = input_ds['polarity']
     # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
-    isocalc_sigma = input_data['isocalc_sigma']
+    isocalc_sigma = input_ds['isocalc_sigma']
     calculate_centroids(config, input_db, polarity, isocalc_sigma)
 
 
@@ -100,7 +100,7 @@ def convert_imzml(args, config):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Run colocalization jobs',
-                                     usage='python3 -m annotation_pipeline annotate [input_config.json] [output path]')
+                                     usage='python3 -m annotation_pipeline annotate [ds_config.json] [db_config.json] [output path]')
     parser.add_argument('--config', type=argparse.FileType('r'), default='config.json', help='config.json path')
 
     subparsers = parser.add_subparsers(title='Sub-commands', dest='action')
@@ -108,15 +108,19 @@ if __name__ == '__main__':
 
     annotate_parser = subparsers.add_parser('annotate')
     annotate_parser.set_defaults(func=annotate)
-    annotate_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
-                                 help='input_config.json path')
+    annotate_parser.add_argument('ds', type=argparse.FileType('r'), default='metabolomics/ds_config2.json',
+                                 nargs='?', help='ds_config.json path')
+    annotate_parser.add_argument('db', type=argparse.FileType('r'), default='metabolomics/db_config2.json',
+                                 nargs='?', help='db_config.json path')
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
 
     centroids_parser = subparsers.add_parser('generate_centroids')
     centroids_parser.set_defaults(func=generate_centroids)
-    centroids_parser.add_argument('input', type=argparse.FileType('r'), default='input_config.json', nargs='?',
-                                  help='input_config.json path')
+    centroids_parser.add_argument('ds', type=argparse.FileType('r'), default='metabolomics/ds_config2.json',
+                                 nargs='?', help='ds_config.json path')
+    centroids_parser.add_argument('db', type=argparse.FileType('r'), default='metabolomics/db_config2.json',
+                                 nargs='?', help='db_config.json path')
 
     convert_parser = subparsers.add_parser('convert_imzml')
     convert_parser.set_defaults(func=convert_imzml)

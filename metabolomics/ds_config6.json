@@ -1,0 +1,9 @@
+{
+  "name": "microbial_interaction",
+  "imzml_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/f8795949-9c16-419e-a4ea-a75eb4e58d07/microbial_interaction.imzML",
+  "ibd_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/f8795949-9c16-419e-a4ea-a75eb4e58d07/microbial_interaction.ibd",
+  "num_decoys": 20,
+  "polarity": "+",
+  "isocalc_sigma": 0.001238,
+  "metaspace_id": ""
+}

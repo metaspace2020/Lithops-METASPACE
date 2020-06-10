@@ -1,0 +1,9 @@
+{
+  "name": "****",
+  "imzml_path": "https://****.imzML",
+  "ibd_path": "https://****.ibd",
+  "num_decoys": 20,
+  "polarity": "+",
+  "isocalc_sigma": 0.001238,
+  "metaspace_id": "**** (Optional)"
+}

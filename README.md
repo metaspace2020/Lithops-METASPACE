@@ -51,16 +51,16 @@ There are also 3 notebooks prepared for benchmarking that can be run with Jupyte
 
 | Dataset                             | Author                            | Config file |
 | :---------------------------------: | :-------------------------------: | :---------: |
-| [Brain02_Bregma1-42_02](https://metaspace2020.eu/annotations?ds=2016-09-22_11h16m11s) | Régis Lavigne,<br/>University of Rennes 1 | `input_config_small.json` | 
-| [AZ_Rat_Brains](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m53s) | Nicole Strittmatter,<br/>AstraZeneca | `input_config_big.json` | 
-| [CT26_xenograft](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m49s) | Nicole Strittmatter,<br/>AstraZeneca | `input_config_huge.json` | 
-| [Mouse brain test434x902](https://metaspace2020.eu/annotations?ds=2019-07-31_17h35m11s)<br/>Captured with AP-SMALDI5<br/> and Q Exactive HF Orbitrap | Dhaka Bhandari,<br/>Justus-Liebig-University Giessen | `input_config_huge2.json` | 
-| [X089-Mousebrain_842x603](https://metaspace2020.eu/annotations?ds=2019-08-19_11h28m42s)<br/>Captured with AP-SMALDI5<br/> and Q Exactive HF Orbitrap | Dhaka Bhandari,<br/>Justus-Liebig-University Giessen | `input_config_huge3.json` | 
-| Microbial interaction slide | Don Nguyen,<br/>European Molecular Biology Laboratory | `input_config_huge4.json` | 
+| [Brain02_Bregma1-42_02](https://metaspace2020.eu/annotations?ds=2016-09-22_11h16m11s) | Régis Lavigne,<br/>University of Rennes 1 | `ds_config1.json` | 
+| [AZ_Rat_Brains](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m53s) | Nicole Strittmatter,<br/>AstraZeneca | `ds_config2.json` | 
+| [CT26_xenograft](https://metaspace2020.eu/annotations?ds=2016-09-21_16h06m49s) | Nicole Strittmatter,<br/>AstraZeneca | `ds_config3.json` | 
+| [Mouse brain test434x902](https://metaspace2020.eu/annotations?ds=2019-07-31_17h35m11s)<br/>Captured with AP-SMALDI5<br/> and Q Exactive HF Orbitrap | Dhaka Bhandari,<br/>Justus-Liebig-University Giessen | `ds_config4.json` | 
+| [X089-Mousebrain_842x603](https://metaspace2020.eu/annotations?ds=2019-08-19_11h28m42s)<br/>Captured with AP-SMALDI5<br/> and Q Exactive HF Orbitrap | Dhaka Bhandari,<br/>Justus-Liebig-University Giessen | `ds_config5.json` | 
+| Microbial interaction slide | Don Nguyen,<br/>European Molecular Biology Laboratory | `ds_config6.json` | 
 
 ### Example databases
 
-These molecular databases can be selected in the `input_config.json` files. They are automatically converted to 
+These molecular databases can be selected in the `ds_config.json` files. They are automatically converted to 
 pickle format and uploaded to IBM cloud in the notebooks. 
 
 | Database            | Filename            | Description                    |
