@@ -26,7 +26,7 @@ class Pipeline(object):
         if not self.use_cache:
             self.cacher.clean()
 
-        self.ds_segm_size_mb = 100
+        self.ds_segm_size_mb = 128
         self.image_gen_config = {
             "q": 99,
             "do_preprocessing": False,
@@ -77,7 +77,8 @@ class Pipeline(object):
             self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.ds_config["ibd_path"],
                                                          self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
             self.ds_segms_cobjects, self.ds_segms_len = \
-                segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds, self.ds_segm_size_mb)
+                segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds,
+                                self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
             logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
             self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
 
@@ -94,10 +95,16 @@ class Pipeline(object):
             self.clip_centr_chunks_cobjects, centr_n = \
                 clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
                               self.db_config["centroids_chunks"], mz_min, mz_max)
+
+            init_centr_segm_n = 32
             centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
-                                                                 centr_n, self.ds_segm_n, self.ds_segm_size_mb)
+                                                            init_centr_segm_n)
+
+            max_ds_segms_size_per_db_segm_mb = 1024
             self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
-                                                       centr_segm_lower_bounds)
+                                                       centr_segm_lower_bounds, self.ds_segments_bounds,
+                                                       self.ds_segm_size_mb, max_ds_segms_size_per_db_segm_mb,
+                                                       self.image_gen_config['ppm'])
             logger.info(f'Segmented centroids chunks into {len(self.db_segms_cobjects)} segments')
             self.cacher.save((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_key)
 

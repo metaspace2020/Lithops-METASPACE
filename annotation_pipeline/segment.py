@@ -3,6 +3,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import sys
+import math
 
 import requests
 from pyimzml.ImzMLParser import ImzMLParser
@@ -141,7 +142,7 @@ def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
     return ds_segments
 
 
-def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb):
+def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb, ds_segm_dtype):
     ds_segm_n = len(ds_segments_bounds)
 
     # extend boundaries of the first and last segments
@@ -172,7 +173,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
 
         return sub_segms_cobjects
 
-    memory_safe_mb = 1024
+    memory_safe_mb = 1536
     memory_capacity_mb = first_level_segm_size_mb * 2 + memory_safe_mb
     first_futures = pw.map(segment_spectra_chunk, ds_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_level_segms_cobjects = pw.get_result(first_futures)
@@ -192,7 +193,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb)
         segm = np.concatenate(segm)
 
         # Alternative in-place sorting (slower) :
-        # segm.view(f'{segm_dtype},{segm_dtype},{segm_dtype}').sort(order=['f1'], axis=0)
+        # segm.view(f'{ds_segm_dtype},{ds_segm_dtype},{ds_segm_dtype}').sort(order=['f1'], axis=0)
         segm = segm[segm[:, 1].argsort()]
 
         bounds_list = ds_segments_bounds[id]
@@ -248,7 +249,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
     return clip_centr_chunks_cobjects, centr_n
 
 
-def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds_segm_size_mb):
+def define_centr_segments(pw, clip_centr_chunks_cobjects, init_centr_segm_n):
     logger.info('Defining centroids segments bounds')
 
     def get_first_peak_mz(cobject, id, storage):
@@ -262,26 +263,17 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
-    ds_size_mb = ds_segm_n * ds_segm_size_mb
-    data_per_centr_segm_mb = 50
-    peaks_per_centr_segm = 1e4
-    centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb, centr_n // peaks_per_centr_segm, 32))
-
-    segm_bounds_q = [i * 1 / centr_segm_n for i in range(0, centr_segm_n)]
+    segm_bounds_q = [i * 1 / init_centr_segm_n for i in range(0, init_centr_segm_n)]
     centr_segm_lower_bounds = np.quantile(first_peak_df_mz, segm_bounds_q)
 
     logger.info(f'Generated {len(centr_segm_lower_bounds)} centroids bounds: {centr_segm_lower_bounds[0]}...{centr_segm_lower_bounds[-1]}')
     return centr_segm_lower_bounds
 
 
-def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
+def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, ds_segms_bounds, ds_segm_size_mb,
+                      max_ds_segms_size_per_db_segm_mb, ppm):
     centr_segm_n = len(centr_segm_lower_bounds)
     centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
-
-    # define first level segmentation and then segment each one into desired number
-    first_level_centr_segm_n = min(32, len(centr_segm_lower_bounds))
-    centr_segm_lower_bounds = np.array_split(centr_segm_lower_bounds, first_level_centr_segm_n)
-    first_level_centr_segm_bounds = np.array([bounds[0] for bounds in centr_segm_lower_bounds])
 
     def segment_centr_df(centr_df, db_segm_lower_bounds):
         first_peak_df = centr_df[centr_df.peak_i == 0].copy()
@@ -293,10 +285,11 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
     def segment_centr_chunk(cobject, id, storage):
         print(f'Segmenting clipped centroids dataframe chunk {id}')
         centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
-        centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
+        centr_segm_df = segment_centr_df(centr_df, centr_segm_lower_bounds)
 
         def _first_level_upload(args):
             segm_i, df = args
+            del df['segm_i']
             return segm_i, storage.put_cobject(df.to_msgpack())
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -320,19 +313,55 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             segm = pd.concat(list(pool.map(_merge, segm_cobjects)))
-            del segm['segm_i']
 
-        centr_segm_df = segment_centr_df(segm, centr_segm_lower_bounds[id])
+        def _second_level_segment(segm, sub_segms_n):
+            segm_bounds_q = [i * 1 / sub_segms_n for i in range(0, sub_segms_n)]
+            sub_segms_lower_bounds = np.quantile(segm[segm.peak_i == 0].mz.values, segm_bounds_q)
+            centr_segm_df = segment_centr_df(segm, sub_segms_lower_bounds)
 
-        def _second_level_upload(args):
-            segm_j, df = args
-            base_id = sum([len(bounds) for bounds in centr_segm_lower_bounds[:id]])
-            segm_i = base_id + segm_j
-            print(f'Storing centroids segment {segm_i}')
+            sub_segms = []
+            for segm_i, df in centr_segm_df.groupby('segm_i'):
+                del df['segm_i']
+                sub_segms.append(df)
+            return sub_segms
+
+        from annotation_pipeline.image import choose_ds_segments
+        first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segms_bounds, segm, ppm)
+        init_ds_segms_to_download_n = last_ds_segm_i - first_ds_segm_i + 1
+        segms = [(init_ds_segms_to_download_n, segm)]
+        max_ds_segms_to_download_n, max_segm = segms[0]
+
+        max_iterations_n = 100
+        iterations_n = 1
+        while max_ds_segms_to_download_n * ds_segm_size_mb > max_ds_segms_size_per_db_segm_mb and iterations_n < max_iterations_n:
+
+            sub_segms = []
+            sub_segms_n = math.ceil(max_ds_segms_to_download_n * ds_segm_size_mb / max_ds_segms_size_per_db_segm_mb)
+            for sub_segm in _second_level_segment(max_segm, sub_segms_n):
+                first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segms_bounds, sub_segm, ppm)
+                ds_segms_to_download_n = last_ds_segm_i - first_ds_segm_i + 1
+                sub_segms.append((ds_segms_to_download_n, sub_segm))
+
+            segms = sub_segms + segms[1:]
+            segms = sorted(segms, key=lambda x: x[0], reverse=True)
+            iterations_n += 1
+            max_ds_segms_to_download_n, max_segm = segms[0]
+
+        # Alternative approach to test if the while loop didnt converge
+        # if iterations_n >= max_iterations_n:
+        #     segm_centr_n = segm.shape[0]
+        #     ds_size_mb = init_ds_segms_to_download_n * ds_segm_size_mb
+        #     data_per_centr_segm_mb = 50
+        #     peaks_per_centr_segm = 1e4
+        #     sub_segms_n = int(max(ds_size_mb // data_per_centr_segm_mb, segm_centr_n // peaks_per_centr_segm, 32))
+        #     segms = list(enumerate(_second_level_segment(segm, sub_segms_n)))
+
+        def _second_level_upload(df):
             return storage.put_cobject(df.to_msgpack())
 
+        print(f'Storing {len(segms)} centroids segments')
         with ThreadPoolExecutor(max_workers=128) as pool:
-            segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
+            segms = [df for _, df in segms]
             segms_cobjects = list(pool.map(_second_level_upload, segms))
 
         return segms_cobjects
@@ -345,7 +374,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds):
     second_level_segms_cobjects = sorted(second_level_segms_cobjects.items(), key=lambda x: x[0])
     second_level_segms_cobjects = [[cobjects] for segm_i, cobjects in second_level_segms_cobjects]
 
-    memory_capacity_mb = 1024
+    memory_capacity_mb = 2048
     second_futures = pw.map(merge_centr_df_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     db_segms_cobjects = list(np.concatenate(pw.get_result(second_futures)))
     append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
