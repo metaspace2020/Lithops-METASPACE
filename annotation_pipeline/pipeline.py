@@ -83,6 +83,7 @@ class Pipeline(object):
             self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
 
         self.ds_segm_n = len(self.ds_segms_cobjects)
+        self.is_intensive_dataset = self.ds_segm_n * self.ds_segm_size_mb > 5000
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
@@ -95,17 +96,16 @@ class Pipeline(object):
             self.clip_centr_chunks_cobjects, centr_n = \
                 clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
                               self.db_config["centroids_chunks"], mz_min, mz_max)
-
-            init_centr_segm_n = 32
             centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
-                                                            init_centr_segm_n)
+                                                            centr_n, self.ds_segm_n, self.ds_segm_size_mb)
 
-            max_ds_segms_size_per_db_segm_mb = 1024
+            max_ds_segms_size_per_db_segm_mb = 2560 if self.is_intensive_dataset else 1536
             self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
                                                        centr_segm_lower_bounds, self.ds_segments_bounds,
                                                        self.ds_segm_size_mb, max_ds_segms_size_per_db_segm_mb,
                                                        self.image_gen_config['ppm'])
             logger.info(f'Segmented centroids chunks into {len(self.db_segms_cobjects)} segments')
+
             self.cacher.save((self.clip_centr_chunks_cobjects, self.db_segms_cobjects), db_segments_cache_key)
 
         self.centr_segm_n = len(self.db_segms_cobjects)
@@ -118,10 +118,7 @@ class Pipeline(object):
             logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
             logger.info('Annotating...')
-            if self.ds_segm_n * self.ds_segm_size_mb > 5000:
-                memory_capacity_mb = 4096
-            else:
-                memory_capacity_mb = 2048
+            memory_capacity_mb = 4096 if self.is_intensive_dataset else 2048
             process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                            self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                            self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)

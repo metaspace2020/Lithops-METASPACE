@@ -249,7 +249,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
     return clip_centr_chunks_cobjects, centr_n
 
 
-def define_centr_segments(pw, clip_centr_chunks_cobjects, init_centr_segm_n):
+def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds_segm_size_mb):
     logger.info('Defining centroids segments bounds')
 
     def get_first_peak_mz(cobject, id, storage):
@@ -263,7 +263,12 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, init_centr_segm_n):
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
-    segm_bounds_q = [i * 1 / init_centr_segm_n for i in range(0, init_centr_segm_n)]
+    ds_size_mb = ds_segm_n * ds_segm_size_mb
+    data_per_centr_segm_mb = 50
+    peaks_per_centr_segm = 1e4
+    centr_segm_n = int(max(ds_size_mb // data_per_centr_segm_mb, centr_n // peaks_per_centr_segm, 32))
+
+    segm_bounds_q = [i * 1 / centr_segm_n for i in range(0, centr_segm_n)]
     centr_segm_lower_bounds = np.quantile(first_peak_df_mz, segm_bounds_q)
 
     logger.info(f'Generated {len(centr_segm_lower_bounds)} centroids bounds: {centr_segm_lower_bounds[0]}...{centr_segm_lower_bounds[-1]}')
@@ -275,6 +280,11 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
     centr_segm_n = len(centr_segm_lower_bounds)
     centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
 
+    # define first level segmentation and then segment each one into desired number
+    first_level_centr_segm_n = min(32, len(centr_segm_lower_bounds))
+    centr_segm_lower_bounds = np.array_split(centr_segm_lower_bounds, first_level_centr_segm_n)
+    first_level_centr_segm_bounds = np.array([bounds[0] for bounds in centr_segm_lower_bounds])
+
     def segment_centr_df(centr_df, db_segm_lower_bounds):
         first_peak_df = centr_df[centr_df.peak_i == 0].copy()
         segment_mapping = np.searchsorted(db_segm_lower_bounds, first_peak_df.mz.values, side='right') - 1
@@ -285,7 +295,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
     def segment_centr_chunk(cobject, id, storage):
         print(f'Segmenting clipped centroids dataframe chunk {id}')
         centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
-        centr_segm_df = segment_centr_df(centr_df, centr_segm_lower_bounds)
+        centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
 
         def _first_level_upload(args):
             segm_i, df = args
@@ -325,10 +335,15 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
                 sub_segms.append(df)
             return sub_segms
 
+        init_segms = _second_level_segment(segm, len(centr_segm_lower_bounds[id]))
+
         from annotation_pipeline.image import choose_ds_segments
-        first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segms_bounds, segm, ppm)
-        init_ds_segms_to_download_n = last_ds_segm_i - first_ds_segm_i + 1
-        segms = [(init_ds_segms_to_download_n, segm)]
+        segms = []
+        for init_segm in init_segms:
+            first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segms_bounds, init_segm, ppm)
+            ds_segms_to_download_n = last_ds_segm_i - first_ds_segm_i + 1
+            segms.append((ds_segms_to_download_n, init_segm))
+        segms = sorted(segms, key=lambda x: x[0], reverse=True)
         max_ds_segms_to_download_n, max_segm = segms[0]
 
         max_iterations_n = 100
@@ -346,15 +361,6 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
             segms = sorted(segms, key=lambda x: x[0], reverse=True)
             iterations_n += 1
             max_ds_segms_to_download_n, max_segm = segms[0]
-
-        # Alternative approach to test if the while loop didnt converge
-        # if iterations_n >= max_iterations_n:
-        #     segm_centr_n = segm.shape[0]
-        #     ds_size_mb = init_ds_segms_to_download_n * ds_segm_size_mb
-        #     data_per_centr_segm_mb = 50
-        #     peaks_per_centr_segm = 1e4
-        #     sub_segms_n = int(max(ds_size_mb // data_per_centr_segm_mb, segm_centr_n // peaks_per_centr_segm, 32))
-        #     segms = list(enumerate(_second_level_segment(segm, sub_segms_n)))
 
         def _second_level_upload(df):
             return storage.put_cobject(df.to_msgpack())
