@@ -3,6 +3,7 @@ import json
 import time
 
 from annotation_pipeline.__main__ import generate_centroids
+from annotation_pipeline.utils import get_pywren_stats
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -15,10 +16,11 @@ if __name__ == '__main__':
     parser.add_argument('--db', type=argparse.FileType('r'), default='metabolomics/db_config2.json',
                         help='db_config.json path')
     args = parser.parse_args()
+    config = json.load(args.config)
 
     start = time.time()
-
-    config = json.load(args.config)
     generate_centroids(args, config)
-
     print(f'--- {time.time() - start:.2f} seconds ---')
+
+    stats = get_pywren_stats()
+    print(stats)
