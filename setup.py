@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 
 from annotation_pipeline import __version__
 
-assert (3, 6) <= sys.version_info < (3, 7), 'Python 3.6 is required'
+assert (3, 7) <= sys.version_info < (3, 8), 'Python 3.7 is required'
 
 setup(name='pywren-annotation-pipeline',
       version=__version__,
@@ -24,6 +24,6 @@ setup(name='pywren-annotation-pipeline',
           "requests==2.22.0",
           "msgpack==0.6.2",
           "msgpack-numpy==0.4.4.3",
-          "metaspace2020", # Only needed for experiment notebooks
-          "psutil", # Only needed for experiment notebooks
+          "metaspace2020",  # Only needed for experiment notebooks
+          "psutil",  # Only needed for experiment notebooks
       ])
