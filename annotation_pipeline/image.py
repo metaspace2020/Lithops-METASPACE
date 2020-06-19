@@ -106,10 +106,10 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
             yield yield_buffer(buffer)
 
 
-def read_ds_segments(first_segm_i, last_segm_i, ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
+def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
                      ds_segm_dtype, storage):
 
-    ds_segms_mb = (last_segm_i - first_segm_i + 1) * ds_segm_size_mb
+    ds_segms_mb = len(ds_segms_cobjects) * ds_segm_size_mb
     safe_mb = 512
     read_memory_mb = ds_segms_mb + safe_mb
     if read_memory_mb > pw_mem_mb:
@@ -185,13 +185,13 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
         print(f'Reading dataset segments {first_ds_segm_i}-{last_ds_segm_i}')
         # read all segments in loop from COS
-        sp_arr = read_ds_segments(first_ds_segm_i, last_ds_segm_i, ds_segms_cobjects[first_ds_segm_i:last_ds_segm_i+1],
+        sp_arr = read_ds_segments(ds_segms_cobjects[first_ds_segm_i:last_ds_segm_i+1],
                                   ds_segms_len[first_ds_segm_i:last_ds_segm_i+1], pw_mem_mb,
                                   ds_segm_size_mb, ds_segm_dtype, storage)
 
         formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
                                            centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
-        safe_mb = 1024
+        safe_mb = 512
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
         images_manager = ImagesManager(storage, max_formula_images_mb * 1024 ** 2)

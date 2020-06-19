@@ -1,7 +1,7 @@
 # Minimal Docker image for PyWren
 
-# Python 3.6
-FROM python:3.6-slim-buster
+# Python 3.7.5
+FROM python:3.7.5-slim-buster
 
 ENV FLASK_PROXY_PORT 8080
 

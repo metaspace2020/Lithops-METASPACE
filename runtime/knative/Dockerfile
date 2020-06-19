@@ -1,8 +1,5 @@
-# Python 3.6
-FROM python:3.6-slim-buster
-
-# Python 3.7
-#FROM python:3.7-slim-buster
+# Python 3.7.5
+FROM python:3.7.5-slim-buster
 
 RUN apt-get update && apt-get install -y \
         zip \

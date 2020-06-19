@@ -3,6 +3,7 @@ import json
 import time
 
 from annotation_pipeline.pipeline import Pipeline
+from annotation_pipeline.utils import get_pywren_stats
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -19,14 +20,18 @@ if __name__ == '__main__':
     parser.set_defaults(use_cache=True)
     args = parser.parse_args()
 
-    start = time.time()
-
     config = json.load(args.config)
     ds_config = json.load(args.ds)
     db_config = json.load(args.db)
 
     pipeline = Pipeline(config, ds_config, db_config, use_cache=args.use_cache)
+
+    start = time.time()
+
     pipeline()
     results_df = pipeline.get_results()
 
     print(f'--- {time.time() - start:.2f} seconds ---')
+
+    stats = get_pywren_stats()
+    print(stats)
