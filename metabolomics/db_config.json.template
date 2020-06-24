@@ -1,6 +1,5 @@
 {
-  "formulas_chunks": "metabolomics/db/formulas_chunks",
-  "centroids_chunks": "metabolomics/db/centroids_chunks",
+  "name": "ds_configN",
   "databases": [
     "metabolomics/db/mol_db1.pickle",
     "metabolomics/db/mol_db2.pickle",

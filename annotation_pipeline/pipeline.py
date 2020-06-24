@@ -25,7 +25,7 @@ class Pipeline(object):
         self.use_cache = use_cache
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
 
-        self.cacher = PipelineCacher(self.pywren_executor, self.ds_config["name"])
+        self.cacher = PipelineCacher(self.pywren_executor, self.ds_config["name"], self.db_config["name"])
         if not self.use_cache:
             self.cacher.clean()
 
@@ -51,7 +51,7 @@ class Pipeline(object):
         db_bucket = self.config["storage"]["db_bucket"]
 
         if use_local:
-            cache_key = 'build_database_local.cache'
+            cache_key = ':db/build_database_local.cache'
 
             if self.cacher.exists(cache_key):
                 self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
@@ -63,7 +63,7 @@ class Pipeline(object):
                 )
                 self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
         else:
-            cache_key = 'build_database.cache'
+            cache_key = ':db/build_database.cache'
 
             if self.cacher.exists(cache_key):
                 self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
@@ -74,7 +74,7 @@ class Pipeline(object):
                 self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
 
     def calculate_centroids(self):
-        cache_key = 'calculate_centroids.cache'
+        cache_key = ':ds/:db/calculate_centroids.cache'
         if self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
         else:
@@ -84,7 +84,7 @@ class Pipeline(object):
             self.cacher.save(self.peaks_cobjects, cache_key)
 
     def load_ds(self):
-        imzml_cache_key = 'load_ds.cache'
+        imzml_cache_key = ':ds/load_ds.cache'
 
         if self.cacher.exists(imzml_cache_key):
             self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
@@ -95,7 +95,7 @@ class Pipeline(object):
             self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
     def split_ds(self):
-        ds_chunks_cache_key = 'split_ds.cache'
+        ds_chunks_cache_key = ':ds/split_ds.cache'
 
         if self.cacher.exists(ds_chunks_cache_key):
             self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
@@ -107,7 +107,7 @@ class Pipeline(object):
             self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
 
     def segment_ds(self):
-        ds_segments_cache_key = 'segment_ds.cache'
+        ds_segments_cache_key = ':ds/segment_ds.cache'
 
         if self.cacher.exists(ds_segments_cache_key):
             self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
@@ -128,7 +128,7 @@ class Pipeline(object):
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
-        db_segments_cache_key = 'segment_centroids.cache'
+        db_segments_cache_key = ':ds/:db/segment_centroids.cache'
 
         if self.cacher.exists(db_segments_cache_key):
             self.clip_centr_chunks_cobjects, self.db_segms_cobjects = self.cacher.load(db_segments_cache_key)
@@ -151,7 +151,7 @@ class Pipeline(object):
         self.centr_segm_n = len(self.db_segms_cobjects)
 
     def annotate(self):
-        annotations_cache_key = 'annotate.cache'
+        annotations_cache_key = ':ds/:db/annotate.cache'
 
         if self.cacher.exists(annotations_cache_key):
             self.formula_metrics_df, self.images_cloud_objs = self.cacher.load(annotations_cache_key)
@@ -172,7 +172,7 @@ class Pipeline(object):
             self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
 
     def run_fdr(self):
-        fdrs_cache_key = 'run_fdr.cache'
+        fdrs_cache_key = ':ds/:db/run_fdr.cache'
 
         if self.cacher.exists(fdrs_cache_key):
             self.rankings_df, self.fdrs = self.cacher.load(fdrs_cache_key)
