@@ -6,6 +6,7 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
+from annotation_pipeline.molecular_db import build_database, calculate_centroids
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader
 from annotation_pipeline.cache import PipelineCacher
@@ -34,13 +35,40 @@ class Pipeline(object):
             "ppm": 3.0
         }
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, use_local=False):
+        self.build_database(use_local=use_local)
+        self.calculate_centroids()
         self.load_ds()
         self.split_ds()
         self.segment_ds()
         self.segment_centroids()
         self.annotate()
         self.run_fdr()
+
+    def build_database(self, use_local=False):
+        if use_local:
+            cache_key = 'build_database_local.cache'
+            pass
+        else:
+            cache_key = 'build_database.cache'
+
+            if self.cacher.exists(cache_key):
+                self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
+            else:
+                self.db_segm_cobjects, self.formula_to_id_cobjects = build_database(
+                    self.pywren_executor, self.config, self.db_config
+                )
+                self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
+
+    def calculate_centroids(self):
+        cache_key = 'calculate_centroids.cache'
+        if self.cacher.exists(cache_key):
+            self.peaks_cobjects = self.cacher.load(cache_key)
+        else:
+            self.peaks_cobjects = calculate_centroids(
+                self.pywren_executor, self.db_segm_cobjects, self.ds_config
+            )
+            self.cacher.save(self.peaks_cobjects, cache_key)
 
     def load_ds(self):
         imzml_cache_key = 'load_ds.cache'
@@ -94,8 +122,7 @@ class Pipeline(object):
             logger.info(f'Loaded {len(self.db_segms_cobjects)} centroids segments from cache')
         else:
             self.clip_centr_chunks_cobjects, centr_n = \
-                clip_centr_df(self.pywren_executor, self.config["storage"]["db_bucket"],
-                              self.db_config["centroids_chunks"], mz_min, mz_max)
+                clip_centr_df(self.pywren_executor, self.peaks_cobjects, mz_min, mz_max)
             centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
                                                             centr_n, self.ds_segm_n, self.ds_segm_size_mb)
 
@@ -138,8 +165,11 @@ class Pipeline(object):
             self.rankings_df, self.fdrs = self.cacher.load(fdrs_cache_key)
             logger.info('Loaded fdrs from cache')
         else:
-            self.rankings_df = build_fdr_rankings(self.pywren_executor, self.config["storage"]["db_bucket"],
-                                                  self.ds_config, self.db_config, self.formula_metrics_df)
+            self.rankings_df = build_fdr_rankings(
+                self.pywren_executor, self.config["storage"]["db_bucket"],
+                self.ds_config, self.db_config,
+                self.formula_to_id_cobjects, self.formula_metrics_df
+            )
             self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
             self.cacher.save((self.rankings_df, self.fdrs), fdrs_cache_key)
 

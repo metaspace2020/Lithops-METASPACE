@@ -225,10 +225,10 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
     return ds_segms_cobjects, ds_segms_len
 
 
-def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
-    def clip_centr_df_chunk(obj, storage):
-        print(f'Clipping centroids dataframe chunk {obj.key}')
-        centroids_df_chunk = pd.read_msgpack(obj.data_stream._raw_stream).sort_values('mz')
+def clip_centr_df(pw, peaks_cobjects, mz_min, mz_max):
+    def clip_centr_df_chunk(peaks_i, peaks_cobject, storage):
+        print(f'Clipping centroids dataframe chunk {peaks_i}')
+        centroids_df_chunk = pd.read_msgpack(storage.get_cobject(peaks_cobject)).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
 
         ds_mz_range_unique_formulas = centroids_df_chunk[(mz_min < centroids_df_chunk.mz) &
@@ -239,7 +239,7 @@ def clip_centr_df(pw, bucket, centr_chunks_prefix, mz_min, mz_max):
         return clip_centr_chunk_cobject, centr_df_chunk.shape[0]
 
     memory_capacity_mb = 512
-    futures = pw.map(clip_centr_df_chunk, f'cos://{bucket}/{centr_chunks_prefix}/', runtime_memory=memory_capacity_mb)
+    futures = pw.map(clip_centr_df_chunk, enumerate(peaks_cobjects), runtime_memory=memory_capacity_mb)
     clip_centr_chunks_cobjects, centr_n = list(zip(*pw.get_result(futures)))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
