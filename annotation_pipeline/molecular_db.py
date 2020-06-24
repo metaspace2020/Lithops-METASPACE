@@ -17,12 +17,11 @@ N_FORMULAS_SEGMENTS = 256
 N_HASH_CHUNKS = 32  # should be less than N_FORMULAS_SEGMENTS
 
 
-def build_database(pw, config, input_db):
-    bucket = config["storage"]["db_bucket"]
+def build_database(pw, db_bucket, db_config):
 
-    adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
-    modifiers = input_db['modifiers']
-    databases = input_db['databases']
+    adducts = [*db_config['adducts'], *DECOY_ADDUCTS]
+    modifiers = db_config['modifiers']
+    databases = db_config['databases']
 
     def hash_formula_to_chunk(formula):
         m = hashlib.md5()
@@ -33,7 +32,7 @@ def build_database(pw, config, input_db):
         print(f'Generating formulas for adduct {adduct}')
 
         def _get_mols(mols_key):
-            return pickle.loads(read_object_with_retry(storage, bucket, mols_key))
+            return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             mols_list = list(pool.map(_get_mols, databases))

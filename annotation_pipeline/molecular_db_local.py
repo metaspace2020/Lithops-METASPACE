@@ -14,24 +14,19 @@ N_FORMULAS_SEGMENTS = 256
 FORMULA_TO_ID_CHUNK_MB = 512
 
 
-def build_database_local(storage, config, input_db):
-    bucket = config["storage"]["db_bucket"]
-    formulas_chunks_prefix = input_db["formulas_chunks"]
-    formula_to_id_chunks_prefix = input_db["formula_to_id_chunks"]
-    clean_from_cos(config, bucket, formulas_chunks_prefix)
-    clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
+def build_database_local(storage, db_bucket, db_config):
 
-    formulas_df = get_formulas_df(storage, bucket, input_db)
+    formulas_df = get_formulas_df(storage, db_bucket, db_config)
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
-    n_formulas_chunks = store_formula_segments(storage, bucket, formulas_chunks_prefix, formulas_df)
-    logger.info(f'Stored {num_formulas} formulas in {n_formulas_chunks} chunks')
+    db_segm_cobjects = store_formula_segments(storage, formulas_df)
+    logger.info(f'Stored {num_formulas} formulas in {len(db_segm_cobjects)} chunks')
 
-    n_formula_to_id = store_formula_to_id(storage, bucket, formula_to_id_chunks_prefix, formulas_df)
-    logger.info(f'Built {n_formula_to_id} formula_to_id dictionaries chunks')
+    formula_to_id_cobjects = store_formula_to_id(storage, formulas_df)
+    logger.info(f'Built {len(formula_to_id_cobjects)} formula_to_id dictionaries chunks')
 
-    return num_formulas, n_formulas_chunks
+    return db_segm_cobjects, formula_to_id_cobjects
 
 
 def _generate_formulas(args):
@@ -39,14 +34,14 @@ def _generate_formulas(args):
     return list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
 
 
-def get_formulas_df(storage, bucket, input_db):
+def get_formulas_df(storage, db_bucket, input_db):
     adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
     # Load databases
     def _get_mols(mols_key):
-        return pickle.loads(read_object_with_retry(storage, bucket, mols_key))
+        return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
 
     with ThreadPoolExecutor(max_workers=128) as pool:
         dbs = list(pool.map(_get_mols, databases))
@@ -63,24 +58,21 @@ def get_formulas_df(storage, bucket, input_db):
     return pd.DataFrame({'formula': sorted(formulas)}).rename_axis(index='formula_i')
 
 
-def store_formula_segments(storage, bucket, formulas_chunks_prefix, formulas_df):
+def store_formula_segments(storage, formulas_df):
     subsegm_size = math.ceil(len(formulas_df) / N_FORMULAS_SEGMENTS)
     segm_list = [formulas_df[i:i+subsegm_size] for i in range(0, len(formulas_df), subsegm_size)]
 
-    def _store(segm_i):
-        storage.put_object(Bucket=bucket,
-                           Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
-                           Body=segm_list[segm_i].to_msgpack())
+    def _store(segm):
+        return storage.put_cobject(segm.to_msgpack())
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        pool.map(_store, range(len(segm_list)))
-
-    return len(segm_list)
+        return list(pool.map(_store, segm_list))
 
 
-def store_formula_to_id(storage, bucket, formula_to_id_chunks_prefix, formulas_df):
+def store_formula_to_id(storage, formulas_df):
     num_formulas = len(formulas_df)
     n_formula_to_id = int(math.ceil(num_formulas * 200 / (FORMULA_TO_ID_CHUNK_MB * 1024 ** 2)))
+    formula_to_id_cobjects = []
     for ch_i in range(n_formula_to_id):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
         start_idx = num_formulas * ch_i // n_formula_to_id
@@ -88,7 +80,6 @@ def store_formula_to_id(storage, bucket, formula_to_id_chunks_prefix, formulas_d
 
         formula_to_id = formulas_df.iloc[start_idx:end_idx].formula.to_dict()
 
-        storage.put_object(Bucket=bucket,
-                           Key=f'{formula_to_id_chunks_prefix}/{ch_i}.msgpack',
-                           Body=msgpack.dumps(formula_to_id))
-    return n_formula_to_id
+        formula_to_id_cobjects.append(storage.put_cobject(msgpack.dumps(formula_to_id)))
+
+    return formula_to_id_cobjects

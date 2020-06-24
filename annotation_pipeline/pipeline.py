@@ -7,10 +7,12 @@ from annotation_pipeline.check_results import get_reference_results, check_resul
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.molecular_db import build_database, calculate_centroids
+from annotation_pipeline.molecular_db_local import build_database_local
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader
 from annotation_pipeline.cache import PipelineCacher
 from annotation_pipeline.utils import append_pywren_stats, logger, read_cloud_object_with_retry
+from pywren_ibm_cloud.storage import Storage
 
 
 class Pipeline(object):
@@ -46,9 +48,20 @@ class Pipeline(object):
         self.run_fdr()
 
     def build_database(self, use_local=False):
+        db_bucket = self.config["storage"]["db_bucket"]
+
         if use_local:
             cache_key = 'build_database_local.cache'
-            pass
+
+            if self.cacher.exists(cache_key):
+                self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
+            else:
+                pw_config = self.pywren_executor.config
+                storage = Storage(pw_config, pw_config['storage_backend']).get_client()
+                self.db_segm_cobjects, self.formula_to_id_cobjects = build_database_local(
+                    storage, db_bucket, self.db_config
+                )
+                self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
         else:
             cache_key = 'build_database.cache'
 
@@ -56,7 +69,7 @@ class Pipeline(object):
                 self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
             else:
                 self.db_segm_cobjects, self.formula_to_id_cobjects = build_database(
-                    self.pywren_executor, self.config, self.db_config
+                    self.pywren_executor, db_bucket, self.db_config
                 )
                 self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
 
