@@ -43,7 +43,7 @@ class Pipeline(object):
         self.run_fdr()
 
     def load_ds(self):
-        imzml_cache_key = f'{self.cacher.prefix}/load_ds.cache'
+        imzml_cache_key = 'load_ds.cache'
 
         if self.cacher.exists(imzml_cache_key):
             self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
@@ -54,7 +54,7 @@ class Pipeline(object):
             self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
     def split_ds(self):
-        ds_chunks_cache_key = f'{self.cacher.prefix}/split_ds.cache'
+        ds_chunks_cache_key = 'split_ds.cache'
 
         if self.cacher.exists(ds_chunks_cache_key):
             self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
@@ -66,7 +66,7 @@ class Pipeline(object):
             self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
 
     def segment_ds(self):
-        ds_segments_cache_key = f'{self.cacher.prefix}/segment_ds.cache'
+        ds_segments_cache_key = 'segment_ds.cache'
 
         if self.cacher.exists(ds_segments_cache_key):
             self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
@@ -87,7 +87,7 @@ class Pipeline(object):
 
     def segment_centroids(self):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
-        db_segments_cache_key = f'{self.cacher.prefix}/segment_centroids.cache'
+        db_segments_cache_key = 'segment_centroids.cache'
 
         if self.cacher.exists(db_segments_cache_key):
             self.clip_centr_chunks_cobjects, self.db_segms_cobjects = self.cacher.load(db_segments_cache_key)
@@ -111,7 +111,7 @@ class Pipeline(object):
         self.centr_segm_n = len(self.db_segms_cobjects)
 
     def annotate(self):
-        annotations_cache_key = f'{self.cacher.prefix}/annotate.cache'
+        annotations_cache_key = 'annotate.cache'
 
         if self.cacher.exists(annotations_cache_key):
             self.formula_metrics_df, self.images_cloud_objs = self.cacher.load(annotations_cache_key)
@@ -132,7 +132,7 @@ class Pipeline(object):
             self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
 
     def run_fdr(self):
-        fdrs_cache_key = f'{self.cacher.prefix}/run_fdr.cache'
+        fdrs_cache_key = 'run_fdr.cache'
 
         if self.cacher.exists(fdrs_cache_key):
             self.rankings_df, self.fdrs = self.cacher.load(fdrs_cache_key)
