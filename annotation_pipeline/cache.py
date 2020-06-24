@@ -13,9 +13,9 @@ class PipelineCacher:
         self.bucket = self.config['pywren']['storage_bucket']
         self.prefixes = {
             '': 'metabolomics/cache/',
-            ':ds/': f'metabolomics/cache/{ds_name}/',
-            ':db/': f'metabolomics/cache/{db_name}/',
-            ':ds/:db/': f'metabolomics/cache/{ds_name}/{db_name}/',
+            ':ds': f'metabolomics/cache/{ds_name}/',
+            ':db': f'metabolomics/cache/{db_name}/',
+            ':ds/:db': f'metabolomics/cache/{ds_name}/{db_name}/',
         }
 
     def resolve_key(self, key):

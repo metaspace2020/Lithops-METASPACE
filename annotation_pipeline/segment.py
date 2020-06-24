@@ -239,7 +239,8 @@ def clip_centr_df(pw, peaks_cobjects, mz_min, mz_max):
         return clip_centr_chunk_cobject, centr_df_chunk.shape[0]
 
     memory_capacity_mb = 512
-    futures = pw.map(clip_centr_df_chunk, enumerate(peaks_cobjects), runtime_memory=memory_capacity_mb)
+    futures = pw.map(clip_centr_df_chunk, list(enumerate(peaks_cobjects)),
+                     runtime_memory=memory_capacity_mb)
     clip_centr_chunks_cobjects, centr_n = list(zip(*pw.get_result(futures)))
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 

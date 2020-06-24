@@ -4,7 +4,7 @@ import pywren_ibm_cloud as pywren
 import pandas as pd
 
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
-from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs
+from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs, calculate_fdrs_vm
 from annotation_pipeline.image import create_process_segment
 from annotation_pipeline.molecular_db import build_database, calculate_centroids
 from annotation_pipeline.molecular_db_local import build_database_local
@@ -19,11 +19,14 @@ class Pipeline(object):
 
     def __init__(self, config, ds_config, db_config, use_cache=True):
         self.config = config
-        self.storage = config['storage']
         self.ds_config = ds_config
         self.db_config = db_config
         self.use_cache = use_cache
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
+
+        storage_handler = Storage(self.config, self.config['pywren']['storage_backend'])
+        storage_handler.bucket = self.config['pywren']['storage_bucket']
+        self.storage = storage_handler.get_client()
 
         self.cacher = PipelineCacher(self.pywren_executor, self.ds_config["name"], self.db_config["name"])
         if not self.use_cache:
@@ -37,35 +40,34 @@ class Pipeline(object):
             "ppm": 3.0
         }
 
-    def __call__(self, use_local=False):
-        self.build_database(use_local=use_local)
+    def __call__(self, vm_algorithm=True):
+        self.build_database(vm_algorithm=vm_algorithm)
         self.calculate_centroids()
         self.load_ds()
         self.split_ds()
         self.segment_ds()
         self.segment_centroids()
         self.annotate()
-        self.run_fdr()
+        self.run_fdr(vm_algorithm=vm_algorithm)
 
-    def build_database(self, use_local=False):
+    def build_database(self, vm_algorithm=False, use_cache=True):
         db_bucket = self.config["storage"]["db_bucket"]
 
-        if use_local:
-            cache_key = ':db/build_database_local.cache'
+        if vm_algorithm:
+            cache_key = ':ds/:db/build_database_vm.cache'
 
-            if self.cacher.exists(cache_key):
-                self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
+            if use_cache and self.cacher.exists(cache_key):
+                self.db_segm_cobjects, self.db_data_cobjects = self.cacher.load(cache_key)
             else:
-                pw_config = self.pywren_executor.config
-                storage = Storage(pw_config, pw_config['storage_backend']).get_client()
-                self.db_segm_cobjects, self.formula_to_id_cobjects = build_database_local(
-                    storage, db_bucket, self.db_config
+
+                self.db_segm_cobjects, self.db_data_cobjects = build_database_local(
+                    self.storage, db_bucket, self.db_config, self.ds_config
                 )
-                self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
+                self.cacher.save((self.db_segm_cobjects, self.db_data_cobjects), cache_key)
         else:
             cache_key = ':db/build_database.cache'
 
-            if self.cacher.exists(cache_key):
+            if use_cache and self.cacher.exists(cache_key):
                 self.db_segm_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
             else:
                 self.db_segm_cobjects, self.formula_to_id_cobjects = build_database(
@@ -73,9 +75,9 @@ class Pipeline(object):
                 )
                 self.cacher.save((self.db_segm_cobjects, self.formula_to_id_cobjects), cache_key)
 
-    def calculate_centroids(self):
+    def calculate_centroids(self, use_cache=True):
         cache_key = ':ds/:db/calculate_centroids.cache'
-        if self.cacher.exists(cache_key):
+        if use_cache and self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
         else:
             self.peaks_cobjects = calculate_centroids(
@@ -83,10 +85,10 @@ class Pipeline(object):
             )
             self.cacher.save(self.peaks_cobjects, cache_key)
 
-    def load_ds(self):
+    def load_ds(self, use_cache=True):
         imzml_cache_key = ':ds/load_ds.cache'
 
-        if self.cacher.exists(imzml_cache_key):
+        if use_cache and self.cacher.exists(imzml_cache_key):
             self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
             logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
         else:
@@ -94,10 +96,10 @@ class Pipeline(object):
             logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
             self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
-    def split_ds(self):
+    def split_ds(self, use_cache=True):
         ds_chunks_cache_key = ':ds/split_ds.cache'
 
-        if self.cacher.exists(ds_chunks_cache_key):
+        if use_cache and self.cacher.exists(ds_chunks_cache_key):
             self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
             logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
         else:
@@ -106,10 +108,10 @@ class Pipeline(object):
             logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
             self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
 
-    def segment_ds(self):
+    def segment_ds(self, use_cache=True):
         ds_segments_cache_key = ':ds/segment_ds.cache'
 
-        if self.cacher.exists(ds_segments_cache_key):
+        if use_cache and self.cacher.exists(ds_segments_cache_key):
             self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
                 self.cacher.load(ds_segments_cache_key)
             logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
@@ -126,11 +128,11 @@ class Pipeline(object):
         self.ds_segm_n = len(self.ds_segms_cobjects)
         self.is_intensive_dataset = self.ds_segm_n * self.ds_segm_size_mb > 5000
 
-    def segment_centroids(self):
+    def segment_centroids(self, use_cache=True):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
         db_segments_cache_key = ':ds/:db/segment_centroids.cache'
 
-        if self.cacher.exists(db_segments_cache_key):
+        if use_cache and self.cacher.exists(db_segments_cache_key):
             self.clip_centr_chunks_cobjects, self.db_segms_cobjects = self.cacher.load(db_segments_cache_key)
             logger.info(f'Loaded {len(self.db_segms_cobjects)} centroids segments from cache')
         else:
@@ -150,10 +152,10 @@ class Pipeline(object):
 
         self.centr_segm_n = len(self.db_segms_cobjects)
 
-    def annotate(self):
+    def annotate(self, use_cache=True):
         annotations_cache_key = ':ds/:db/annotate.cache'
 
-        if self.cacher.exists(annotations_cache_key):
+        if use_cache and self.cacher.exists(annotations_cache_key):
             self.formula_metrics_df, self.images_cloud_objs = self.cacher.load(annotations_cache_key)
             logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
@@ -171,20 +173,26 @@ class Pipeline(object):
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
             self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
 
-    def run_fdr(self):
+    def run_fdr(self, vm_algorithm=False, use_cache=True):
         fdrs_cache_key = ':ds/:db/run_fdr.cache'
-
-        if self.cacher.exists(fdrs_cache_key):
-            self.rankings_df, self.fdrs = self.cacher.load(fdrs_cache_key)
+        if use_cache and self.cacher.exists(fdrs_cache_key):
+            self.fdrs = self.cacher.load(fdrs_cache_key)
             logger.info('Loaded fdrs from cache')
         else:
-            self.rankings_df = build_fdr_rankings(
-                self.pywren_executor, self.config["storage"]["db_bucket"],
-                self.ds_config, self.db_config,
-                self.formula_to_id_cobjects, self.formula_metrics_df
-            )
-            self.fdrs = calculate_fdrs(self.pywren_executor, self.rankings_df)
-            self.cacher.save((self.rankings_df, self.fdrs), fdrs_cache_key)
+            if vm_algorithm:
+                self.fdrs = calculate_fdrs_vm(
+                    self.pywren_executor,
+                    self.formula_metrics_df,
+                    self.db_data_cobjects
+                )
+            else:
+                rankings_df = build_fdr_rankings(
+                    self.pywren_executor, self.config["storage"]["db_bucket"],
+                    self.ds_config, self.db_config,
+                    self.formula_to_id_cobjects, self.formula_metrics_df
+                )
+                self.fdrs = calculate_fdrs(self.pywren_executor, rankings_df)
+            self.cacher.save(self.fdrs, fdrs_cache_key)
 
         logger.info('Number of annotations at with FDR less than:')
         for fdr_step in [0.05, 0.1, 0.2, 0.5]:

@@ -67,7 +67,7 @@ def build_database(pw, db_bucket, db_config):
     results = pw.get_result(futures)
     chunk_cobjects = [[] for i in range(N_HASH_CHUNKS)]
     for cobjects_dict in results:
-        for chunk_i, cobject in cobjects_dict:
+        for chunk_i, cobject in cobjects_dict.items():
             chunk_cobjects[chunk_i].append(cobject)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb,
                         cloud_objects_n=sum(map(len, chunk_cobjects)))
@@ -86,7 +86,7 @@ def build_database(pw, db_bucket, db_config):
         return len(chunk)
 
     memory_capacity_mb = 512
-    futures = pw.map(get_formulas_number_per_chunk, enumerate(chunk_cobjects),
+    futures = pw.map(get_formulas_number_per_chunk, list(enumerate(chunk_cobjects)),
                      runtime_memory=memory_capacity_mb)
     formulas_nums = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
@@ -95,9 +95,9 @@ def build_database(pw, db_bucket, db_config):
         chunk = deduplicate_formulas_chunk(chunk_i, chunk_cobjects, storage)
         formula_i_start = sum(formulas_nums[:chunk_i])
         formula_i_end = formula_i_start + len(chunk)
-        chunk = pd.DataFrame(sorted(chunk),
-                            columns=['formula'],
-                            index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
+        chunk = pd.Series(sorted(chunk),
+                          name='ion_formula',
+                          index=pd.RangeIndex(formula_i_start, formula_i_end, name='formula_i'))
 
         n_threads = N_FORMULAS_SEGMENTS // N_HASH_CHUNKS
         segm_size = math.ceil(len(chunk) / n_threads)
@@ -106,20 +106,20 @@ def build_database(pw, db_bucket, db_config):
         def _store(segm_i):
             id = chunk_i * n_threads + segm_i
             print(f'Storing formulas segment {id}')
-            return storage.put_object(segm_list[segm_i].to_msgpack())
+            return storage.put_cobject(segm_list[segm_i].to_msgpack())
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            segm_cobjects = pool.map(_store, range(n_threads))
+            segm_cobjects = list(pool.map(_store, range(n_threads)))
 
         return segm_cobjects
 
     memory_capacity_mb = 512
-    futures = pw.map(store_formulas_segments, enumerate(chunk_cobjects),
+    futures = pw.map(store_formulas_segments, list(enumerate(chunk_cobjects)),
                      runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
+    db_segm_cobjects = [segm for segms in results for segm in segms]
     append_pywren_stats(futures, memory_mb=memory_capacity_mb,
-                        cloud_objects_n=N_HASH_CHUNKS + N_FORMULAS_SEGMENTS)
-    db_segm_cobjects = [segm for fdr, segms in results for segm in segms]
+                        cloud_objects_n=len(db_segm_cobjects))
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
@@ -137,7 +137,7 @@ def build_database(pw, db_bucket, db_config):
 
         def _get(cobj):
             formula_chunk = read_cloud_object_with_retry(storage, cobj, pd.read_msgpack)
-            formula_to_id_chunk = dict(zip(formula_chunk.formula, formula_chunk.index))
+            formula_to_id_chunk = dict(zip(formula_chunk.values, formula_chunk.index))
             return formula_to_id_chunk
 
         formula_to_id = {}
@@ -149,7 +149,7 @@ def build_database(pw, db_bucket, db_config):
 
     safe_mb = 512
     memory_capacity_mb = formula_to_id_chunk_mb * 2 + safe_mb
-    futures = pw.map(store_formula_to_id_chunk, enumerate(formula_to_id_inputs),
+    futures = pw.map(store_formula_to_id_chunk, list(enumerate(formula_to_id_inputs)),
                      runtime_memory=memory_capacity_mb)
     formula_to_id_cobjects = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=n_formula_to_id)
@@ -172,7 +172,7 @@ def calculate_centroids(pw, db_segm_cobjects, ds_config):
     def calculate_peaks_chunk(segm_i, segm_cobject, storage):
         print(f'Calculating peaks from formulas chunk {segm_i}')
         chunk_df = pd.read_msgpack(storage.get_cobject(segm_cobject, stream=True))
-        peaks = [peak for formula_i, formula in chunk_df.formula.items()
+        peaks = [peak for formula_i, formula in chunk_df.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
@@ -194,7 +194,8 @@ def calculate_centroids(pw, db_segm_cobjects, ds_config):
     })
 
     memory_capacity_mb = 2048
-    futures = pw.map(calculate_peaks_chunk, enumerate(db_segm_cobjects), runtime_memory=memory_capacity_mb)
+    futures = pw.map(calculate_peaks_chunk, list(enumerate(db_segm_cobjects)),
+                     runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 

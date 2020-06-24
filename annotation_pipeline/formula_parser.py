@@ -16,6 +16,10 @@ def parse_formula(f):
             for (elem, n) in formula_regexp.findall(f)]
 
 
+def format_modifiers(*adducts):
+    return ''.join(adduct for adduct in adducts if adduct and adduct not in ('[M]+', '[M]-'))
+
+
 def generate_ion_formula(formula, *adducts):
     formula = clean_regexp.sub('', formula)
     adducts = [clean_regexp.sub('', adduct) for adduct in adducts]
