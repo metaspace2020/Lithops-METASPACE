@@ -6,7 +6,8 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs, calculate_fdrs_vm
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.molecular_db import build_database, calculate_centroids, validate_formula_cobjects
+from annotation_pipeline.molecular_db import build_database, calculate_centroids, validate_formula_cobjects, \
+    validate_peaks_cobjects
 from annotation_pipeline.molecular_db_local import build_database_local
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments
@@ -42,7 +43,7 @@ class Pipeline(object):
 
     def __call__(self, vm_algorithm=True, debug_validate=False):
         self.build_database(vm_algorithm=vm_algorithm, debug_validate=debug_validate)
-        self.calculate_centroids()
+        self.calculate_centroids(debug_validate=debug_validate)
         self.load_ds()
         self.split_ds()
         self.segment_ds()
@@ -77,7 +78,7 @@ class Pipeline(object):
         if debug_validate:
             validate_formula_cobjects(self.storage, self.formula_cobjects)
 
-    def calculate_centroids(self, use_cache=True):
+    def calculate_centroids(self, use_cache=True, debug_validate=False):
         cache_key = ':ds/:db/calculate_centroids.cache'
         if use_cache and self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
@@ -86,6 +87,9 @@ class Pipeline(object):
                 self.pywren_executor, self.formula_cobjects, self.ds_config
             )
             self.cacher.save(self.peaks_cobjects, cache_key)
+
+        if debug_validate:
+            validate_peaks_cobjects(self.pywren_executor, self.peaks_cobjects)
 
     def load_ds(self, use_cache=True):
         imzml_cache_key = ':ds/load_ds.cache'

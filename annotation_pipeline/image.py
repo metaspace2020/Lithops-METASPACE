@@ -7,7 +7,7 @@ import msgpack_numpy as msgpack
 
 from annotation_pipeline.utils import ds_dims, get_pixel_indices, read_cloud_object_with_retry
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
-from annotation_pipeline.segment import ISOTOPIC_PEAK_N
+ISOTOPIC_PEAK_N = 4
 
 
 class ImagesManager:

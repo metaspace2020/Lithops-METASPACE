@@ -1,3 +1,4 @@
+from collections import defaultdict
 import pickle
 
 import numpy as np
@@ -9,12 +10,11 @@ import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
 from annotation_pipeline.image import choose_ds_segments
-from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, read_object_with_retry, \
+from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, \
     read_cloud_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 
-ISOTOPIC_PEAK_N = 4
 MAX_MZ_VALUE = 10 ** 5
 
 
@@ -280,7 +280,6 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds
 def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, ds_segms_bounds, ds_segm_size_mb,
                       max_ds_segms_size_per_db_segm_mb, ppm):
     centr_segm_n = len(centr_segm_lower_bounds)
-    centr_segm_lower_bounds = centr_segm_lower_bounds.copy()
 
     # define first level segmentation and then segment each one into desired number
     first_level_centr_segm_n = min(32, len(centr_segm_lower_bounds))
@@ -339,7 +338,6 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
         init_segms = _second_level_segment(segm, len(centr_segm_lower_bounds[id]))
 
-        from annotation_pipeline.image import choose_ds_segments
         segms = []
         for init_segm in init_segms:
             first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segms_bounds, init_segm, ppm)
@@ -374,7 +372,6 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
         return segms_cobjects
 
-    from collections import defaultdict
     second_level_segms_cobjects = defaultdict(list)
     for sub_segms_cobjects in first_level_segms_cobjects:
         for first_level_segm_i in sub_segms_cobjects:
@@ -382,10 +379,15 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
     second_level_segms_cobjects = sorted(second_level_segms_cobjects.items(), key=lambda x: x[0])
     second_level_segms_cobjects = [[cobjects] for segm_i, cobjects in second_level_segms_cobjects]
 
+    first_level_cobjs = [co for cos in first_level_segms_cobjects for co in cos.values()]
+    assert len(first_level_cobjs) == len(set(co.key for co in first_level_cobjs)), 'Duplicate CloudObject key in first_level_segms_cobjects'
+
     memory_capacity_mb = 2048
     second_futures = pw.map(merge_centr_df_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     db_segms_cobjects = list(np.concatenate(pw.get_result(second_futures)))
     append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
+
+    assert len(db_segms_cobjects) == len(set(co.key for co in db_segms_cobjects)), 'Duplicate CloudObject key in db_segms_cobjects'
 
     return db_segms_cobjects
 
@@ -454,10 +456,12 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
             logger.warning('segment_centroids produced unsorted segments:')
             logger.warning(unsorted)
 
-    formula_in_segms = [(formula, segm_i) for segm_i, formulas in enumerate(segm_formula_is) for formula in formulas]
-    formula_in_segms_df = pd.DataFrame(formula_in_segms, columns=['formula','segm_i'])
-    formulas_in_multiple_segms = (formula_in_segms_df.groupby('formula').segm_i.count() > 1)[lambda s: s].index
-    formulas_in_multiple_segms_df = formula_in_segms_df[lambda df: df.formula.isin(formulas_in_multiple_segms)].sort_values('formula')
+    formula_in_segms_df = pd.DataFrame([
+        (formula_i, segm_i) for segm_i, formula_is in enumerate(segm_formula_is)
+        for formula_i in formula_is
+    ], columns=['formula_i','segm_i'])
+    formulas_in_multiple_segms = (formula_in_segms_df.groupby('formula_i').segm_i.count() > 1)[lambda s: s].index
+    formulas_in_multiple_segms_df = formula_in_segms_df[lambda df: df.formula_i.isin(formulas_in_multiple_segms)].sort_values('formula_i')
 
     if not formulas_in_multiple_segms_df.empty:
         logger.warning('segment_centroids produced put the same formula in multiple segments:')
