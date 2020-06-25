@@ -156,7 +156,7 @@ class Pipeline(object):
         self.ds_segm_n = len(self.ds_segms_cobjects)
         self.is_intensive_dataset = self.ds_segm_n * self.ds_segm_size_mb > 5000
 
-        if debug_validate:
+        if debug_validate and vm_algorithm:
             validate_ds_segments(
                 self.pywren_executor, self.imzml_reader, self.ds_segments_bounds,
                 self.ds_segms_cobjects, self.ds_segms_len,
@@ -192,7 +192,7 @@ class Pipeline(object):
                 self.image_gen_config['ppm']
             )
 
-    def annotate(self, use_cache=True):
+    def annotate(self, use_cache=True, vm_algorithm=True):
         annotations_cache_key = ':ds/:db/annotate.cache'
 
         if use_cache and self.cacher.exists(annotations_cache_key):
@@ -203,7 +203,8 @@ class Pipeline(object):
             memory_capacity_mb = 4096 if self.is_intensive_dataset else 2048
             process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                            self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
-                                                           self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb)
+                                                           self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
+                                                           vm_algorithm)
 
             futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
             formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))

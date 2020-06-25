@@ -107,7 +107,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 
 
 def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
-                     ds_segm_dtype, storage):
+                     ds_segm_dtype, vm_algorithm, storage):
 
     ds_segms_mb = len(ds_segms_cobjects) * ds_segm_size_mb
     safe_mb = 512
@@ -116,7 +116,10 @@ def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb
         raise Exception(f'There isn\'t enough memory to read dataset segments, consider increasing PyWren\'s memory for at least {read_memory_mb} mb.')
 
     def read_ds_segment(cobject):
-        data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+        if vm_algorithm:
+            data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
+        else:
+            data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
 
         if isinstance(data, list):
             if isinstance(data[0], np.ndarray):
@@ -182,7 +185,8 @@ def choose_ds_segments(ds_segments_bounds, centr_df, ppm):
 
 
 def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
-                           imzml_reader, image_gen_config, pw_mem_mb, ds_segm_size_mb):
+                           imzml_reader, image_gen_config, pw_mem_mb, ds_segm_size_mb,
+                           vm_algorithm):
     ds_segm_dtype = imzml_reader.mzPrecision
     sample_area_mask = make_sample_area_mask(imzml_reader.coordinates)
     nrows, ncols = ds_dims(imzml_reader.coordinates)
@@ -200,7 +204,7 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
         # read all segments in loop from COS
         sp_arr = read_ds_segments(ds_segms_cobjects[first_ds_segm_i:last_ds_segm_i+1],
                                   ds_segms_len[first_ds_segm_i:last_ds_segm_i+1], pw_mem_mb,
-                                  ds_segm_size_mb, ds_segm_dtype, storage)
+                                  ds_segm_size_mb, ds_segm_dtype, vm_algorithm, storage)
 
         formula_images_it = gen_iso_images(
             sp_inds=sp_arr.sp_i.values, sp_mzs=sp_arr.mz.values, sp_ints=sp_arr.int.values,
