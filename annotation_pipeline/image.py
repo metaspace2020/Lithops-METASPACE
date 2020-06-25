@@ -116,35 +116,48 @@ def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb
         raise Exception(f'There isn\'t enough memory to read dataset segments, consider increasing PyWren\'s memory for at least {read_memory_mb} mb.')
 
     def read_ds_segment(cobject):
-        data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
-        if type(data) == list:
-            sp_arr = np.concatenate(data)
-        else:
-            sp_arr = data
-        return sp_arr
+        data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+
+        if isinstance(data, list):
+            if isinstance(data[0], np.ndarray):
+                data = np.concatenate(data)
+            else:
+                data = pd.concat(data, ignore_index=True, sort=False)
+
+        if isinstance(data, np.ndarray):
+            data = pd.DataFrame({
+                'mz': data[:, 1],
+                'int': data[:, 2],
+                'sp_i': data[:, 0],
+            })
+
+        return data
 
     safe_mb = 1024
     concat_memory_mb = ds_segms_mb * 2 + safe_mb
     if concat_memory_mb > pw_mem_mb:
-
         print('Using pre-allocated concatenation')
-        sp_arr = np.zeros((sum(ds_segms_len), 3), dtype=ds_segm_dtype)
-        row_i = 0
+        segm_len = sum(ds_segms_len)
+        sp_df = pd.DataFrame({
+            'mz': np.zeros(segm_len, dtype=ds_segm_dtype),
+            'int': np.zeros(segm_len, dtype=np.float32),
+            'sp_i': np.zeros(segm_len, dtype=np.uint32),
+        })
+        row_start = 0
         for cobject in ds_segms_cobjects:
-            sub_sp_arr = read_ds_segment(cobject)
-            sp_arr[row_i:row_i + len(sub_sp_arr)] = sub_sp_arr
-            row_i += len(sub_sp_arr)
-        sp_arr.view(f'{ds_segm_dtype},{ds_segm_dtype},{ds_segm_dtype}').sort(order=['f1'],
-                                                                             axis=0)  # assume mz in column 1
+            sub_sp_df = read_ds_segment(cobject)
+            row_end = row_start + len(sub_sp_df)
+            sp_df.iloc[row_start:row_end] = sub_sp_df
+            row_start += len(sub_sp_df)
 
     else:
-
         with ThreadPoolExecutor(max_workers=128) as pool:
-            sp_arr = list(pool.map(read_ds_segment, ds_segms_cobjects))
-        sp_arr = np.concatenate(sp_arr)
-        sp_arr = sp_arr[sp_arr[:, 1].argsort()]  # assume mz in column 1
+            sp_df = list(pool.map(read_ds_segment, ds_segms_cobjects))
+        sp_df = pd.concat(sp_df, ignore_index=True, sort=False)
 
-    return sp_arr
+    sp_df.sort_values('mz', inplace=True)
+
+    return sp_df
 
 
 def make_sample_area_mask(coordinates):
@@ -189,8 +202,10 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
                                   ds_segms_len[first_ds_segm_i:last_ds_segm_i+1], pw_mem_mb,
                                   ds_segm_size_mb, ds_segm_dtype, storage)
 
-        formula_images_it = gen_iso_images(sp_inds=sp_arr[:,0], sp_mzs=sp_arr[:,1], sp_ints=sp_arr[:,2],
-                                           centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1)
+        formula_images_it = gen_iso_images(
+            sp_inds=sp_arr.sp_i.values, sp_mzs=sp_arr.mz.values, sp_ints=sp_arr.int.values,
+            centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1
+        )
         safe_mb = 512
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')

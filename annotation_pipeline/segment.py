@@ -223,6 +223,8 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
     ds_segms_cobjects = list(np.concatenate(ds_segms_cobjects))
     append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=ds_segm_n)
 
+    assert len(ds_segms_cobjects) == len(set(co.key for co in ds_segms_cobjects)), 'Duplicate CloudObjects in ds_segms_cobjects'
+
     return ds_segms_cobjects, ds_segms_len
 
 
@@ -433,13 +435,13 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
 
     with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
         # Report large/sparse segments (indication that formulas have not been but in the right segment)
-        large_or_sparse = stats_df[(stats_df.mz_span > 15) | (stats_df.biggest_gap > 2)]
+        large_or_sparse = stats_df[((stats_df.mz_span > 15) | (stats_df.biggest_gap > 2)) & (stats_df.n_ds_segms > 2)]
         if not large_or_sparse.empty:
             logger.warning('segment_centroids produced unexpectedly large/sparse segments:')
             logger.warning(large_or_sparse)
 
         # Report cases with fewer peaks than expected (indication that formulas are being split between multiple segments)
-        wrong_n_peaks = stats_df[(stats_df.avg_n_peaks < 3.9) | (stats_df.min_n_peaks < 2) | (stats_df.max_n_peaks > 4)]
+        wrong_n_peaks = stats_df[(stats_df.avg_n_peaks < 3.8) | (stats_df.min_n_peaks < 2) | (stats_df.max_n_peaks > 4)]
         if not wrong_n_peaks.empty:
             logger.warning('segment_centroids produced segments with unexpected peaks-per-formula (should be almost always 4, occasionally 2 or 3):')
             logger.warning(wrong_n_peaks)
@@ -467,3 +469,43 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
         logger.warning('segment_centroids produced put the same formula in multiple segments:')
         logger.warning(formulas_in_multiple_segms_df)
 
+
+def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len):
+    def get_segm_stats(cobject, storage):
+        segm = pd.read_msgpack(storage.get_cobject(cobject, stream=True))
+
+        assert (segm.columns == ['mz', 'int', 'sp_i']).all(), f'Wrong ds_segm columns: {segm.columns}'
+        assert isinstance(segm.index, pd.RangeIndex), 'ds_segm does not have a RangeIndex'
+        assert segm.dtypes[1] == np.float32, 'ds_segm.int should be float32'
+        assert segm.dtypes[2] == np.uint32, 'ds_segm.sp_i should be uint32'
+
+        return pd.Series({
+            'n_rows': len(segm),
+            'min_mz': segm.mz.min(),
+            'max_mz': segm.mz.max(),
+            'is_sorted': segm.mz.is_monotonic,
+        })
+
+    futures = pw.map(get_segm_stats, ds_segms_cobjects)
+    results = pw.get_result(futures)
+
+    segms_df = pd.DataFrame(results)
+    segms_df['min_bound'] = ds_segments_bounds[:, 0]
+    segms_df['max_bound'] = ds_segments_bounds[:, 1]
+    segms_df['expected_len'] = ds_segms_len
+
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
+        out_of_bounds = segms_df[(segms_df.min_mz < segms_df.min_bound) | (segms_df.max_mz > segms_df.max_bound)]
+        if not out_of_bounds.empty:
+            logger.warning('segment_spectra mz values are outside ds_segments_bounds:')
+            logger.warning(out_of_bounds)
+
+        bad_len = segms_df[segms_df.n_rows != segms_df.expected_len]
+        if not bad_len.empty:
+            logger.warning('segment_spectra lengths don\'t match ds_segms_len:')
+            logger.warning(bad_len)
+
+        total_len = segms_df.n_rows.sum()
+        expected_total_len = np.sum(imzml_reader.mzLengths)
+        if total_len != expected_total_len:
+            logger.warning(f'segment_spectra output {total_len} peaks, but the imzml file contained {expected_total_len}')

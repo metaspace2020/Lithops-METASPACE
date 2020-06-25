@@ -86,6 +86,10 @@ def store_formula_segments(storage, formulas_df):
         return storage.put_cobject(segm.to_msgpack())
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        return list(pool.map(_store, segm_list))
+        formula_cobjects = list(pool.map(_store, segm_list))
+
+    assert len(formula_cobjects) == len(set(co.key for co in formula_cobjects)), 'Duplicate CloudObjects in formula_cobjects'
+
+    return formula_cobjects
 
 

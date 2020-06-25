@@ -10,8 +10,9 @@ from annotation_pipeline.molecular_db import build_database, calculate_centroids
     validate_peaks_cobjects
 from annotation_pipeline.molecular_db_local import build_database_local
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
-    clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments
+    clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments, validate_ds_segments
 from annotation_pipeline.cache import PipelineCacher
+from annotation_pipeline.segment_ds_vm import load_and_split_ds_vm
 from annotation_pipeline.utils import append_pywren_stats, logger, read_cloud_object_with_retry
 from pywren_ibm_cloud.storage import Storage
 
@@ -42,11 +43,11 @@ class Pipeline(object):
         }
 
     def __call__(self, vm_algorithm=True, debug_validate=False):
-        self.build_database(vm_algorithm=vm_algorithm, debug_validate=debug_validate)
+        self.build_database(debug_validate=debug_validate, vm_algorithm=vm_algorithm)
         self.calculate_centroids(debug_validate=debug_validate)
-        self.load_ds()
-        self.split_ds()
-        self.segment_ds()
+        self.load_ds(vm_algorithm=vm_algorithm)
+        self.split_ds(vm_algorithm=vm_algorithm)
+        self.segment_ds(debug_validate=debug_validate, vm_algorithm=vm_algorithm)
         self.segment_centroids(debug_validate=debug_validate)
         self.annotate()
         self.run_fdr(vm_algorithm=vm_algorithm)
@@ -91,48 +92,75 @@ class Pipeline(object):
         if debug_validate:
             validate_peaks_cobjects(self.pywren_executor, self.peaks_cobjects)
 
-    def load_ds(self, use_cache=True):
-        imzml_cache_key = ':ds/load_ds.cache'
-
-        if use_cache and self.cacher.exists(imzml_cache_key):
-            self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
-            logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
+    def load_ds(self, use_cache=True, vm_algorithm=True):
+        if vm_algorithm:
+            pass # all work is done in segment_ds
         else:
-            self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.ds_config['imzml_path'])
-            logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
-            self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
+            imzml_cache_key = ':ds/load_ds.cache'
 
-    def split_ds(self, use_cache=True):
-        ds_chunks_cache_key = ':ds/split_ds.cache'
+            if use_cache and self.cacher.exists(imzml_cache_key):
+                self.imzml_reader, self.imzml_cobject = self.cacher.load(imzml_cache_key)
+                logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
+            else:
+                self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.ds_config['imzml_path'])
+                logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
+                self.cacher.save((self.imzml_reader, self.imzml_cobject), imzml_cache_key)
 
-        if use_cache and self.cacher.exists(ds_chunks_cache_key):
-            self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
-            logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
+    def split_ds(self, use_cache=True, vm_algorithm=True):
+        if vm_algorithm:
+            pass # all work is done in segment_ds
         else:
-            self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.ds_config['ibd_path'],
-                                                    self.imzml_cobject, self.imzml_reader)
-            logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
-            self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
+            ds_chunks_cache_key = ':ds/split_ds.cache'
 
-    def segment_ds(self, use_cache=True):
-        ds_segments_cache_key = ':ds/segment_ds.cache'
+            if use_cache and self.cacher.exists(ds_chunks_cache_key):
+                self.ds_chunks_cobjects = self.cacher.load(ds_chunks_cache_key)
+                logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
+            else:
+                self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.ds_config['ibd_path'],
+                                                        self.imzml_cobject, self.imzml_reader)
+                logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
+                self.cacher.save(self.ds_chunks_cobjects, ds_chunks_cache_key)
 
-        if use_cache and self.cacher.exists(ds_segments_cache_key):
-            self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
-                self.cacher.load(ds_segments_cache_key)
-            logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
+    def segment_ds(self, use_cache=True, debug_validate=False, vm_algorithm=True):
+        if vm_algorithm:
+            ds_chunks_cache_key = ':ds/segment_ds_vm.cache'
+
+            if use_cache and self.cacher.exists(ds_chunks_cache_key):
+                result = self.cacher.load(ds_chunks_cache_key)
+                logger.info(f'Loaded dataset segments from cache')
+            else:
+                result = load_and_split_ds_vm(self.storage, self.ds_config, self.ds_segm_size_mb)
+                self.cacher.save(result, ds_chunks_cache_key)
+                logger.info(f'Uploaded dataset segments')
+            self.imzml_reader, \
+            self.ds_segments_bounds, \
+            self.ds_segms_cobjects, \
+            self.ds_segms_len = result
         else:
-            sample_sp_n = 1000
-            self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.ds_config["ibd_path"],
-                                                         self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
-            self.ds_segms_cobjects, self.ds_segms_len = \
-                segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds,
-                                self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
-            logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
-            self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
+            ds_segments_cache_key = ':ds/segment_ds.cache'
+
+            if use_cache and self.cacher.exists(ds_segments_cache_key):
+                self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
+                    self.cacher.load(ds_segments_cache_key)
+                logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
+            else:
+                sample_sp_n = 1000
+                self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.ds_config["ibd_path"],
+                                                             self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
+                self.ds_segms_cobjects, self.ds_segms_len = \
+                    segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds,
+                                    self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
+                logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
+                self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), ds_segments_cache_key)
 
         self.ds_segm_n = len(self.ds_segms_cobjects)
         self.is_intensive_dataset = self.ds_segm_n * self.ds_segm_size_mb > 5000
+
+        if debug_validate:
+            validate_ds_segments(
+                self.pywren_executor, self.imzml_reader, self.ds_segments_bounds,
+                self.ds_segms_cobjects, self.ds_segms_len,
+            )
 
     def segment_centroids(self, use_cache=True, debug_validate=False):
         mz_min, mz_max = self.ds_segments_bounds[0, 0], self.ds_segments_bounds[-1, 1]
