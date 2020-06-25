@@ -8,6 +8,7 @@ import math
 import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
+from annotation_pipeline.image import choose_ds_segments
 from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, read_object_with_retry, \
     read_cloud_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
@@ -387,3 +388,78 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
     append_pywren_stats(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
 
     return db_segms_cobjects
+
+
+def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
+    def get_segm_stats(storage, segm_cobject):
+        segm = pd.read_msgpack(storage.get_cobject(segm_cobject))
+        mzs = np.sort(segm.mz.values)
+        ds_segm_lo, ds_segm_hi = choose_ds_segments(ds_segms_bounds, segm, ppm)
+        n_peaks = segm.groupby('formula_i').peak_i.count()
+        formula_is = segm.formula_i.unique()
+        stats = pd.Series({
+            'min_mz': mzs[0],
+            'max_mz': mzs[-1],
+            'mz_span': mzs[-1] - mzs[0],
+            'n_ds_segms': ds_segm_hi - ds_segm_lo + 1,
+            'biggest_gap': (mzs[1:] - mzs[:-1]).max(),
+            'avg_n_peaks': n_peaks.mean(),
+            'min_n_peaks': n_peaks.min(),
+            'max_n_peaks': n_peaks.max(),
+            'missing_peaks': (
+                segm[segm.formula_i.isin(n_peaks.index[n_peaks != 4])]
+                .groupby('formula_i')
+                .peak_i
+                .apply(lambda peak_is: len(set(range(len(peak_is))) - set(peak_is)))
+                .sum()
+            ),
+            'is_sorted': segm.mz.is_monotonic,
+            'n_formulas': segm.formula_i.nunique(),
+        })
+        return formula_is, stats
+
+    futures = pw.map(get_segm_stats, db_segms_cobjects, runtime_memory=1024)
+    results = pw.get_result(futures)
+    segm_formula_is = [formula_is for formula_is, stats in results]
+    stats_df = pd.DataFrame([stats for formula_is, stats in results])
+
+    try:
+        __import__('__main__').debug_segms_df = stats_df
+        logger.info('segment_centroids debug info written to "debug_segms_df" variable')
+    except:
+        pass
+
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
+        # Report large/sparse segments (indication that formulas have not been but in the right segment)
+        large_or_sparse = stats_df[(stats_df.mz_span > 15) | (stats_df.biggest_gap > 2)]
+        if not large_or_sparse.empty:
+            logger.warning('segment_centroids produced unexpectedly large/sparse segments:')
+            logger.warning(large_or_sparse)
+
+        # Report cases with fewer peaks than expected (indication that formulas are being split between multiple segments)
+        wrong_n_peaks = stats_df[(stats_df.avg_n_peaks < 3.9) | (stats_df.min_n_peaks < 2) | (stats_df.max_n_peaks > 4)]
+        if not wrong_n_peaks.empty:
+            logger.warning('segment_centroids produced segments with unexpected peaks-per-formula (should be almost always 4, occasionally 2 or 3):')
+            logger.warning(wrong_n_peaks)
+
+        # Report missing peaks
+        missing_peaks = stats_df[stats_df.missing_peaks > 0]
+        if not missing_peaks.empty:
+            logger.warning('segment_centroids produced segments with missing peaks:')
+            logger.warning(missing_peaks)
+
+        # Report unsorted segments
+        unsorted = stats_df[~stats_df.is_sorted]
+        if not unsorted.empty:
+            logger.warning('segment_centroids produced unsorted segments:')
+            logger.warning(unsorted)
+
+    formula_in_segms = [(formula, segm_i) for segm_i, formulas in enumerate(segm_formula_is) for formula in formulas]
+    formula_in_segms_df = pd.DataFrame(formula_in_segms, columns=['formula','segm_i'])
+    formulas_in_multiple_segms = (formula_in_segms_df.groupby('formula').segm_i.count() > 1)[lambda s: s].index
+    formulas_in_multiple_segms_df = formula_in_segms_df[lambda df: df.formula.isin(formulas_in_multiple_segms)].sort_values('formula')
+
+    if not formulas_in_multiple_segms_df.empty:
+        logger.warning('segment_centroids produced put the same formula in multiple segments:')
+        logger.warning(formulas_in_multiple_segms_df)
+

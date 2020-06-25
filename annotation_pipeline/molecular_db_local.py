@@ -19,10 +19,10 @@ def build_database_local(storage, db_bucket, db_config, ds_config):
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
-    db_segm_cobjects = store_formula_segments(storage, formulas_df)
-    logger.info(f'Stored {num_formulas} formulas in {len(db_segm_cobjects)} chunks')
+    formula_cobjects = store_formula_segments(storage, formulas_df)
+    logger.info(f'Stored {num_formulas} formulas in {len(formula_cobjects)} chunks')
 
-    return db_segm_cobjects, db_data_cobjects
+    return formula_cobjects, db_data_cobjects
 
 
 def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):

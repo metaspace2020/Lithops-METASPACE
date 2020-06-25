@@ -117,9 +117,9 @@ def build_database(pw, db_bucket, db_config):
     futures = pw.map(store_formulas_segments, list(enumerate(chunk_cobjects)),
                      runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    db_segm_cobjects = [segm for segms in results for segm in segms]
+    formula_cobjects = [segm for segms in results for segm in segms]
     append_pywren_stats(futures, memory_mb=memory_capacity_mb,
-                        cloud_objects_n=len(db_segm_cobjects))
+                        cloud_objects_n=len(formula_cobjects))
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
@@ -130,7 +130,7 @@ def build_database(pw, db_bucket, db_config):
     n_formula_to_id = int(math.ceil(formulas_bytes / (formula_to_id_chunk_mb * 1024 ** 2)))
     formula_to_id_bounds = [N_FORMULAS_SEGMENTS * ch_i // n_formula_to_id for ch_i in range(n_formula_to_id + 1)]
     formula_to_id_ranges = list(zip(formula_to_id_bounds[:-1], formula_to_id_bounds[1:]))
-    formula_to_id_inputs = [db_segm_cobjects[start:end] for start, end in formula_to_id_ranges if start != end]
+    formula_to_id_inputs = [formula_cobjects[start:end] for start, end in formula_to_id_ranges if start != end]
 
     def store_formula_to_id_chunk(ch_i, input_cobjects, storage):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
@@ -155,10 +155,10 @@ def build_database(pw, db_bucket, db_config):
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=n_formula_to_id)
     logger.info(f'Built {n_formula_to_id} formula_to_id dictionaries chunks')
 
-    return db_segm_cobjects, formula_to_id_cobjects
+    return formula_cobjects, formula_to_id_cobjects
 
 
-def calculate_centroids(pw, db_segm_cobjects, ds_config):
+def calculate_centroids(pw, formula_cobjects, ds_config):
     polarity = ds_config['polarity']
     isocalc_sigma = ds_config['isocalc_sigma']
 
@@ -194,7 +194,7 @@ def calculate_centroids(pw, db_segm_cobjects, ds_config):
     })
 
     memory_capacity_mb = 2048
-    futures = pw.map(calculate_peaks_chunk, list(enumerate(db_segm_cobjects)),
+    futures = pw.map(calculate_peaks_chunk, list(enumerate(formula_cobjects)),
                      runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
     append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
@@ -223,3 +223,44 @@ def upload_mol_dbs_from_dir(config, bucket, key_prefix, path, force=False):
     for file in Path(path).glob('mol_db*.csv'):
         key = f'{key_prefix}/{file.stem}.pickle'
         upload_mol_db_from_file(config, bucket, key, file, force)
+
+
+def validate_formula_cobjects(storage, formula_cobjects):
+    segms = [pd.read_msgpack(storage.get_cobject(co)) for co in formula_cobjects]
+
+    formula_sets = []
+    index_sets = []
+    # Check format
+    for segm_i, segm in enumerate(segms):
+        if not isinstance(segm, pd.Series):
+            print(f'formula_cobjects[{segm_i}] is not a pd.Series')
+        else:
+            if segm.empty:
+                print(f'formula_cobjects[{segm_i}] is empty')
+            if segm.name != "ion_formula":
+                print(f'formula_cobjects[{segm_i}].name != "ion_formula"')
+            if not isinstance(segm.index, pd.RangeIndex):
+                print(f'formula_cobjects[{segm_i}] is not a pd.RangeIndex')
+            if segm.index.name != "formula_i":
+                print(f'formula_cobjects[{segm_i}].index.name != "formula_i"')
+            if (segm == '').any():
+                print(f'formula_cobjects[{segm_i}] contains an empty string')
+            if any(not isinstance(s, str) for s in segm):
+                print(f'formula_cobjects[{segm_i}] contains non-string values')
+            duplicates = segm[segm.duplicated()]
+            if not duplicates.empty:
+                print(f'formula_cobjects[{segm_i}] contains {len(duplicates)} duplicate values')
+
+            formula_sets.append(set(segm))
+            index_sets.append(set(segm.index))
+
+    if sum(len(fs) for fs in formula_sets) != len(set().union(*formula_sets)):
+        print(f'formula_cobjects contains values that are included in multiple segments')
+    if sum(len(idxs) for idxs in index_sets) != len(set().union(*index_sets)):
+        print(f'formula_cobjects contains formula_i values that are included in multiple segments')
+
+    n_formulas = sum(len(fs) for fs in formula_sets)
+    print(f'Found {n_formulas} formulas across {len(segms)} segms')
+
+    # __import__('__main__').db_segms = db_segms
+
