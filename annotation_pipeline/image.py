@@ -106,6 +106,28 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
             yield yield_buffer(buffer)
 
 
+def read_ds_segment(cobject, vm_algorithm, storage):
+    if vm_algorithm:
+        data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+    else:
+        data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
+
+    if isinstance(data, list):
+        if isinstance(data[0], np.ndarray):
+            data = np.concatenate(data)
+        else:
+            data = pd.concat(data, ignore_index=True, sort=False)
+
+    if isinstance(data, np.ndarray):
+        data = pd.DataFrame({
+            'mz': data[:, 1],
+            'int': data[:, 2],
+            'sp_i': data[:, 0],
+        })
+
+    return data
+
+
 def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb,
                      ds_segm_dtype, vm_algorithm, storage):
 
@@ -114,27 +136,6 @@ def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb
     read_memory_mb = ds_segms_mb + safe_mb
     if read_memory_mb > pw_mem_mb:
         raise Exception(f'There isn\'t enough memory to read dataset segments, consider increasing PyWren\'s memory for at least {read_memory_mb} mb.')
-
-    def read_ds_segment(cobject):
-        if vm_algorithm:
-            data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
-        else:
-            data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
-
-        if isinstance(data, list):
-            if isinstance(data[0], np.ndarray):
-                data = np.concatenate(data)
-            else:
-                data = pd.concat(data, ignore_index=True, sort=False)
-
-        if isinstance(data, np.ndarray):
-            data = pd.DataFrame({
-                'mz': data[:, 1],
-                'int': data[:, 2],
-                'sp_i': data[:, 0],
-            })
-
-        return data
 
     safe_mb = 1024
     concat_memory_mb = ds_segms_mb * 2 + safe_mb
@@ -148,14 +149,14 @@ def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb
         })
         row_start = 0
         for cobject in ds_segms_cobjects:
-            sub_sp_df = read_ds_segment(cobject)
+            sub_sp_df = read_ds_segment(cobject, vm_algorithm, storage)
             row_end = row_start + len(sub_sp_df)
             sp_df.iloc[row_start:row_end] = sub_sp_df
             row_start += len(sub_sp_df)
 
     else:
         with ThreadPoolExecutor(max_workers=128) as pool:
-            sp_df = list(pool.map(read_ds_segment, ds_segms_cobjects))
+            sp_df = list(pool.map(lambda co: read_ds_segment(co, vm_algorithm, storage), ds_segms_cobjects))
         sp_df = pd.concat(sp_df, ignore_index=True, sort=False)
 
     sp_df.sort_values('mz', inplace=True)

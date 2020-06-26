@@ -9,7 +9,7 @@ import math
 import requests
 from pyimzml.ImzMLParser import ImzMLParser
 
-from annotation_pipeline.image import choose_ds_segments
+from annotation_pipeline.image import choose_ds_segments, read_ds_segment
 from annotation_pipeline.utils import logger, get_pixel_indices, append_pywren_stats, \
     read_cloud_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
@@ -472,18 +472,13 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
 
 def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len, vm_algorithm):
     def get_segm_stats(cobject, storage):
-        if vm_algorithm:
-            segm = pd.read_msgpack(storage.get_cobject(cobject, stream=True))
+        segm = read_ds_segment(cobject, vm_algorithm, storage)
+        assert (segm.columns == ['mz', 'int', 'sp_i']).all(), f'Wrong ds_segm columns: {segm.columns}'
+        assert isinstance(segm.index, pd.RangeIndex), f'ds_segm does not have a RangeIndex {segm.index}'
 
-            assert (segm.columns == ['mz', 'int', 'sp_i']).all(), f'Wrong ds_segm columns: {segm.columns}'
-            assert isinstance(segm.index, pd.RangeIndex), 'ds_segm does not have a RangeIndex'
+        if vm_algorithm:
             assert segm.dtypes[1] == np.float32, 'ds_segm.int should be float32'
             assert segm.dtypes[2] == np.uint32, 'ds_segm.sp_i should be uint32'
-        else:
-            segm = msgpack.load(storage.get_cobject(cobject, stream=True))
-            if isinstance(segm, list):
-                segm = np.concatenate(segm)
-                segm = pd.DataFrame({'mz': segm[:, 1]})
 
         return pd.Series({
             'n_rows': len(segm),
