@@ -1,7 +1,7 @@
 {
   "name": "CT26_xenograft",
-  "imzml_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/Image1_/Image1_CT26.imzML",
-  "ibd_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/Image1_/Image1_CT26.ibd",
+  "imzml_path": "cos://metaspace-de-public/metabolomics/ds/ds3/Image1_CT26.imzML",
+  "ibd_path": "cos://metaspace-de-public/metabolomics/ds/ds3/Image1_CT26.ibd",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

@@ -1,7 +1,7 @@
 {
   "name": "X089-Mousebrain",
-  "imzml_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/bff3b4de-4a7e-4ef8-9269-48720c05fad6/X089-Mousebrain_842x603_12um_A25__DB.imzml",
-  "ibd_path": "https://sm-engine-upload.s3-eu-west-1.amazonaws.com/bff3b4de-4a7e-4ef8-9269-48720c05fad6/X089-Mousebrain_842x603_12um_A25__DB.IBD",
+  "imzml_path": "cos://metaspace-de-public/metabolomics/ds/ds5/X089-Mousebrain_842x603_12um_A25__DB.imzml",
+  "ibd_path": "cos://metaspace-de-public/metabolomics/ds/ds5/X089-Mousebrain_842x603_12um_A25__DB.IBD",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

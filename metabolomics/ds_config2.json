@@ -1,7 +1,7 @@
 {
   "name": "AZ_Rat_brains",
-  "imzml_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/rat_brains/Image5.imzML",
-  "ibd_path": "https://sm-engine-raw-datasets.s3-eu-west-1.amazonaws.com/AstraZeneca/rat_brains/Image5.ibd",
+  "imzml_path": "cos://metaspace-de-public/metabolomics/ds/ds2/Image5.imzML",
+  "ibd_path": "cos://metaspace-de-public/metabolomics/ds/ds2/Image5.ibd",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

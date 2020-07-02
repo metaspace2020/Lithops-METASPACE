@@ -16,21 +16,26 @@ STORAGE_CONFIG = extract_storage_config(PYWREN_CONFIG)
 STORAGE = InternalStorage(STORAGE_CONFIG).storage_handler
 
 
-def download_dataset(imzml_url, idb_url, local_path, chunk_size=1024 ** 3):
+def download_dataset(imzml_url, ibd_url, local_path, storage):
     def _download(url, path):
-        with requests.get(url, stream=True) as r:
-            r.raise_for_status()
-            with path.open('wb') as f:
-                for chunk in r.iter_content(chunk_size=chunk_size):
-                    f.write(chunk)
+        if url.startswith('cos://'):
+            bucket, key = url[len('cos://'):].split('/', maxsplit=1)
+            print((bucket, key))
+            res = storage.download_file(bucket, key, str(path))
+            print(res)
+        else:
+            with requests.get(url, stream=True) as r:
+                r.raise_for_status()
+                with path.open('wb') as f:
+                    for chunk in r.iter_content():
+                        f.write(chunk)
 
     Path(local_path).mkdir(exist_ok=True)
     imzml_path = local_path / 'ds.imzML'
     ibd_path = local_path / 'ds.ibd'
 
     with ThreadPoolExecutor() as ex:
-        ex.submit(_download, imzml_url, imzml_path)
-        ex.submit(_download, idb_url, ibd_path)
+        ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
 
     imzml_size = imzml_path.stat().st_size / (1024 ** 2)
     ibd_size = ibd_path.stat().st_size / (1024 ** 2)
@@ -158,7 +163,7 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb):
 
         logger.debug('Downloading dataset...')
         t = time()
-        imzml_size, ibd_size = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir)
+        imzml_size, ibd_size = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage)
         logger.info('Downloaded dataset in {:.2f} sec'.format(time() - t))
         logger.debug(' * imzML size: {:.2f} mb'.format(imzml_size))
         logger.debug(' * ibd size: {:.2f} mb'.format(ibd_size))
