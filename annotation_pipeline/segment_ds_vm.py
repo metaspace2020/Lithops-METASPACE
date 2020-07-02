@@ -125,7 +125,7 @@ def segment_spectra_chunk(chunk_i, sp_mz_int_buf, ds_segments_bounds, ds_segment
         segm_i, (l, r) = args
         segm_start, segm_end = np.searchsorted(sp_mz_int_buf.mz.values, (l, r))
         segm = sp_mz_int_buf.iloc[segm_start:segm_end]
-        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i}.msgpack')
+        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
         return segm_i, len(segm)
 
     with ThreadPoolExecutor(4) as pool:
@@ -142,7 +142,7 @@ def parse_and_segment_chunk(args):
 def upload_segments(storage, ds_segments_path, chunks_n, segments_n):
     def _upload(segm_i):
         segm = pd.concat([
-            pd.read_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i}.msgpack')
+            pd.read_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
             for chunk_i in range(chunks_n)
         ], ignore_index=True, sort=False)
         segm.sort_values('mz', inplace=True)
