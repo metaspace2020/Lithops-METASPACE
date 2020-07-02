@@ -1,6 +1,8 @@
+import os
 from tempfile import TemporaryDirectory
 import requests
 from pyimzml.ImzMLParser import ImzMLParser
+from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 import numpy as np
@@ -20,9 +22,7 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     def _download(url, path):
         if url.startswith('cos://'):
             bucket, key = url[len('cos://'):].split('/', maxsplit=1)
-            print((bucket, key))
-            res = storage.download_file(bucket, key, str(path))
-            print(res)
+            storage.download_file(bucket, key, str(path))
         else:
             with requests.get(url, stream=True) as r:
                 r.raise_for_status()
@@ -39,70 +39,62 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
 
     imzml_size = imzml_path.stat().st_size / (1024 ** 2)
     ibd_size = ibd_path.stat().st_size / (1024 ** 2)
-    return imzml_size, ibd_size
+    logger.debug(f' * imzML size: {imzml_size:.2f} mb')
+    logger.debug(f' * ibd size: {ibd_size:.2f} mb')
+    return imzml_path, ibd_path
 
 
-def ds_imzml_path(ds_data_path):
-    return next(str(p) for p in Path(ds_data_path).iterdir()
-                if str(p).lower().endswith('.imzml'))
+
+def plan_dataset_chunks(imzml_reader, max_size=512 * 1024 ** 2):
+    item_size = np.dtype(imzml_reader.mzPrecision).itemsize + 4 + 4
+    coord_sizes = np.array(imzml_reader.mzLengths) * item_size
+
+    chunk_ranges = []
+    chunk_start = 0
+    chunk_size = 0
+    for (i, size) in enumerate(coord_sizes):
+        if chunk_size + size > max_size:
+            chunk_ranges.append((chunk_start, i))
+            chunk_start = i
+            chunk_size = 0
+        chunk_size += size
+    chunk_ranges.append((chunk_start, len(coord_sizes)))
+    return chunk_ranges
 
 
-def parse_dataset_chunks(imzml_parser, coordinates, max_size=512 * 1024 ** 2):
-    def ds_dims(coordinates):
-        min_x, min_y = np.amin(coordinates, axis=0)
-        max_x, max_y = np.amax(coordinates, axis=0)
-        nrows, ncols = max_y - min_y + 1, max_x - min_x + 1
-        return nrows, ncols
-
+def parse_dataset_chunk(imzml_reader, ibd_path, start, end):
     def get_pixel_indices(coordinates):
-        _coord = np.array(coordinates)
-        _coord = np.around(_coord, 5)
-        _coord -= np.amin(_coord, axis=0)
+        _coord = np.array(coordinates, dtype=np.uint32)
+        _coord -= np.min(_coord, axis=0)
+        xs, ys = _coord[:, 0], _coord[:, 1]
+        return ys * (np.max(xs) + 1) + xs
 
-        _, ncols = ds_dims(coordinates)
-        pixel_indices = _coord[:, 1] * ncols + _coord[:, 0]
-        pixel_indices = pixel_indices.astype(np.int32)
-        return pixel_indices
-
-    sp_id_to_idx = get_pixel_indices(coordinates)
-
-    def sort_dataset_chunk(sp_inds_list, mzs_list, ints_list):
-        mzs = np.concatenate(mzs_list)
-        by_mz = np.argsort(mzs)
-        sp_mz_int_buf = pd.DataFrame({
-            'mz': mzs[by_mz],
-            'int': np.concatenate(ints_list)[by_mz].astype(np.float32),
-            'sp_i': np.concatenate(sp_inds_list)[by_mz],
-        })
-        return sp_mz_int_buf
-
-    curr_sp_i = 0
+    sp_id_to_idx = get_pixel_indices(imzml_reader.coordinates)
     sp_inds_list, mzs_list, ints_list = [], [], []
 
-    estimated_size_mb = 0
-    for x, y in coordinates:
-        mzs_, ints_ = imzml_parser.getspectrum(curr_sp_i)
-        ints_ = ints_.astype(np.float32)
-        sp_idx = np.ones_like(mzs_, dtype=np.uint32) * sp_id_to_idx[curr_sp_i]
-        mzs_list.append(mzs_)
-        ints_list.append(ints_)
-        sp_inds_list.append(sp_idx)
-        estimated_size_mb += mzs_.nbytes + ints_.nbytes + sp_idx.nbytes
-        curr_sp_i += 1
-        if estimated_size_mb > max_size:
-            yield sort_dataset_chunk(sp_inds_list, mzs_list, ints_list)
-            sp_inds_list, mzs_list, ints_list = [], [], []
-            estimated_size_mb = 0
+    with open(ibd_path, 'rb') as ibd_file:
+        for curr_sp_i in range(start, end):
+            mzs_, ints_ = imzml_reader.read_spectrum_from_file(ibd_file, curr_sp_i)
+            ints_ = ints_.astype(np.float32)
+            sp_idx = np.ones_like(mzs_, dtype=np.uint32) * sp_id_to_idx[curr_sp_i]
+            mzs_list.append(mzs_)
+            ints_list.append(ints_)
+            sp_inds_list.append(sp_idx)
 
-    if len(sp_inds_list) > 0:
-        yield sort_dataset_chunk(sp_inds_list, mzs_list, ints_list)
+    mzs = np.concatenate(mzs_list)
+    by_mz = np.argsort(mzs)
+    return pd.DataFrame({
+        'mz': mzs[by_mz],
+        'int': np.concatenate(ints_list)[by_mz].astype(np.float32),
+        'sp_i': np.concatenate(sp_inds_list)[by_mz],
+    })
 
 
-def define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=5, sample_sp_n=1000):
+def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_sp_n=1000):
+    sp_n = len(imzml_parser.coordinates)
     sample_ratio = sample_sp_n / sp_n
 
     def spectra_sample_gen(imzml_parser, sample_ratio):
-        sp_n = len(imzml_parser.coordinates)
         sample_size = int(sp_n * sample_ratio)
         sample_sp_inds = np.random.choice(np.arange(sp_n), sample_size)
         for sp_idx in sample_sp_inds:
@@ -128,23 +120,38 @@ def define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=5, sample_sp_n=1000):
     return ds_segments_bounds
 
 
-def segment_spectra_chunk(sp_mz_int_buf, ds_segments_bounds, ds_segments_path):
+def segment_spectra_chunk(chunk_i, sp_mz_int_buf, ds_segments_bounds, ds_segments_path):
     def _segment(args):
         segm_i, (l, r) = args
         segm_start, segm_end = np.searchsorted(sp_mz_int_buf.mz.values, (l, r))
         segm = sp_mz_int_buf.iloc[segm_start:segm_end]
-        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}.msgpack', append=True)
+        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i}.msgpack')
         return segm_i, len(segm)
 
-    with ThreadPoolExecutor() as pool:
+    with ThreadPoolExecutor(4) as pool:
         return list(pool.map(_segment, enumerate(ds_segments_bounds)))
 
 
-def upload_segments(storage, ds_segments_path, segments_n):
-    def _upload(segm_i):
-        return storage.put_cobject((ds_segments_path / f'ds_segm_{segm_i:04}.msgpack').open('rb'))
+def parse_and_segment_chunk(args):
+    imzml_reader, ibd_path, chunk_i, start, end, ds_segments_bounds, ds_segments_path = args
+    sp_mz_int_buf = parse_dataset_chunk(imzml_reader, ibd_path, start, end)
+    segm_sizes = segment_spectra_chunk(chunk_i, sp_mz_int_buf, ds_segments_bounds, ds_segments_path)
+    return segm_sizes
 
-    with ThreadPoolExecutor() as pool:
+
+def upload_segments(storage, ds_segments_path, chunks_n, segments_n):
+    def _upload(segm_i):
+        segm = pd.concat([
+            pd.read_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i}.msgpack')
+            for chunk_i in range(chunks_n)
+        ], ignore_index=True, sort=False)
+        segm.sort_values('mz', inplace=True)
+        segm.reset_index(drop=True, inplace=True)
+        segm = segm.to_msgpack()
+        logger.debug(f'Uploading segment {segm_i}: {len(segm)} bytes')
+        return storage.put_cobject(segm)
+
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
         ds_segms_cobjects = list(pool.map(_upload, range(segments_n)))
 
     assert len(ds_segms_cobjects) == len(set(co.key for co in ds_segms_cobjects)), 'Duplicate CloudObjects in ds_segms_cobjects'
@@ -152,7 +159,39 @@ def upload_segments(storage, ds_segments_path, segments_n):
     return ds_segms_cobjects
 
 
-def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb):
+def make_segments(imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort_memory):
+    n_cpus = os.cpu_count()
+    ds_size = sum(imzml_reader.mzLengths) * (np.dtype(imzml_reader.mzPrecision).itemsize + 4 + 4)
+    # TODO: Tune chunk_size to ensure no OOMs are caused
+    chunk_size_to_fit_in_memory = sort_memory // 2 // n_cpus
+    chunk_size_to_use_all_cpus = ds_size * 1.1 // n_cpus
+    chunk_size = min(chunk_size_to_fit_in_memory, chunk_size_to_use_all_cpus)
+    chunk_ranges = plan_dataset_chunks(imzml_reader, max_size=chunk_size)
+    chunks_n = len(chunk_ranges)
+    logger.debug(f'Reading dataset in {chunks_n} chunks: {chunk_ranges}')
+
+    segm_sizes = []
+    with ProcessPoolExecutor(n_cpus) as ex:
+        chunk_tasks = [
+            (imzml_reader, ibd_path, chunk_i, start, end, ds_segments_bounds, segments_dir)
+            for chunk_i, (start, end) in enumerate(chunk_ranges)
+        ]
+        for chunk_segm_sizes in ex.map(parse_and_segment_chunk, chunk_tasks):
+            segm_sizes.extend(chunk_segm_sizes)
+
+    ds_segms_len = (
+        pd.DataFrame(segm_sizes, columns=['segm_i', 'segm_size'])
+            .groupby('segm_i')
+            .segm_size
+            .sum()
+            .sort_index()
+            .values
+    )
+
+    return chunks_n, ds_segms_len
+
+
+def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32):
     start = time()
 
     with TemporaryDirectory() as tmp_dir:
@@ -163,47 +202,33 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb):
 
         logger.debug('Downloading dataset...')
         t = time()
-        imzml_size, ibd_size = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage)
+        imzml_path, ibd_path = download_dataset(
+            ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage
+        )
         logger.info('Downloaded dataset in {:.2f} sec'.format(time() - t))
-        logger.debug(' * imzML size: {:.2f} mb'.format(imzml_size))
-        logger.debug(' * ibd size: {:.2f} mb'.format(ibd_size))
 
         logger.debug('Loading parser...')
         t = time()
-        imzml_parser = ImzMLParser(ds_imzml_path(imzml_dir))
+        imzml_parser = ImzMLParser(str(imzml_path))
         imzml_reader = imzml_parser.portable_spectrum_reader()
         logger.info('Loaded parser in {:.2f} sec'.format(time() - t))
 
-        coordinates = [coo[:2] for coo in imzml_parser.coordinates]
-        sp_n = len(coordinates)
-
         logger.debug('Defining segments bounds...')
         t = time()
-        ds_segments_bounds = define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=ds_segm_size_mb)
+        ds_segments_bounds = define_ds_segments(imzml_parser, ds_segm_size_mb=ds_segm_size_mb)
         segments_n = len(ds_segments_bounds)
-        logger.info('Defined segments in {:.2f} sec'.format(time() - t))
-        logger.debug(' * segments number:', segments_n)
+        logger.info(f'Defined {segments_n} segments in {time() - t:.2f} sec')
 
         logger.debug('Segmenting...')
         t = time()
-        segm_sizes = []
-        for sp_mz_int_buf in parse_dataset_chunks(imzml_parser, coordinates):
-            chunk_segm_sizes = segment_spectra_chunk(sp_mz_int_buf, ds_segments_bounds, segments_dir)
-            segm_sizes.extend(chunk_segm_sizes)
-        ds_segms_len = (
-             pd.DataFrame(segm_sizes, columns=['segm_i', 'segm_size'])
-            .groupby('segm_i')
-            .segm_size
-            .sum()
-            .sort_index()
-            .values
+        chunks_n, ds_segms_len = make_segments(
+            imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort_memory
         )
-
         logger.info('Segmented dataset in {:.2f} sec'.format(time() - t))
 
         logger.debug('Uploading segments...')
         t = time()
-        ds_segms_cobjects = upload_segments(storage, segments_dir, segments_n)
+        ds_segms_cobjects = upload_segments(storage, segments_dir, chunks_n, segments_n)
         logger.info('Uploaded segments in {:.2f} sec'.format(time() - t))
 
         logger.info('load_and_split_ds_vm total: {:.2f} sec'.format(time() - start))

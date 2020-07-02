@@ -159,8 +159,6 @@ def read_ds_segments(ds_segms_cobjects, ds_segms_len, pw_mem_mb, ds_segm_size_mb
             sp_df = list(pool.map(lambda co: read_ds_segment(co, vm_algorithm, storage), ds_segms_cobjects))
         sp_df = pd.concat(sp_df, ignore_index=True, sort=False)
 
-    sp_df.sort_values('mz', inplace=True)
-
     return sp_df
 
 

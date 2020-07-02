@@ -495,8 +495,8 @@ def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects
     results = pw.get_result(futures)
 
     segms_df = pd.DataFrame(results)
-    segms_df['min_bound'] = ds_segments_bounds[:, 0]
-    segms_df['max_bound'] = ds_segments_bounds[:, 1]
+    segms_df['min_bound'] = np.concatenate([[0], ds_segments_bounds[1:, 0]])
+    segms_df['max_bound'] = np.concatenate([ds_segments_bounds[:-1, 1], [100000]])
     segms_df['expected_len'] = ds_segms_len
 
     with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', 1000):
@@ -509,6 +509,11 @@ def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects
         if not bad_len.empty:
             logger.warning('segment_spectra lengths don\'t match ds_segms_len:')
             logger.warning(bad_len)
+
+        unsorted = segms_df[~segms_df.is_sorted]
+        if not unsorted.empty:
+            logger.warning('segment_spectra produced unsorted segments:')
+            logger.warning(unsorted)
 
         total_len = segms_df.n_rows.sum()
         expected_total_len = np.sum(imzml_reader.mzLengths)
