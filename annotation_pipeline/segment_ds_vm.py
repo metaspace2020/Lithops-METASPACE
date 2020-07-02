@@ -7,6 +7,7 @@ import numpy as np
 from time import time
 import pandas as pd
 
+from annotation_pipeline.utils import logger
 from pywren_ibm_cloud.storage import InternalStorage
 from pywren_ibm_cloud.config import default_config, extract_storage_config
 
@@ -155,30 +156,30 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb):
         segments_dir = Path(tmp_dir) / 'segments'
         segments_dir.mkdir()
 
-        print('Downloading dataset...', end=' ', flush=True)
+        logger.debug('Downloading dataset...')
         t = time()
         imzml_size, ibd_size = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir)
-        print('DONE {:.2f} sec'.format(time() - t))
-        print(' * imzML size: {:.2f} mb'.format(imzml_size))
-        print(' * ibd size: {:.2f} mb'.format(ibd_size))
+        logger.info('Downloaded dataset in {:.2f} sec'.format(time() - t))
+        logger.debug(' * imzML size: {:.2f} mb'.format(imzml_size))
+        logger.debug(' * ibd size: {:.2f} mb'.format(ibd_size))
 
-        print('Loading parser...', end=' ', flush=True)
+        logger.debug('Loading parser...')
         t = time()
         imzml_parser = ImzMLParser(ds_imzml_path(imzml_dir))
         imzml_reader = imzml_parser.portable_spectrum_reader()
-        print('DONE {:.2f} sec'.format(time() - t))
+        logger.info('Loaded parser in {:.2f} sec'.format(time() - t))
 
         coordinates = [coo[:2] for coo in imzml_parser.coordinates]
         sp_n = len(coordinates)
 
-        print('Defining segments bounds...', end=' ', flush=True)
+        logger.debug('Defining segments bounds...')
         t = time()
         ds_segments_bounds = define_ds_segments(imzml_parser, sp_n, ds_segm_size_mb=ds_segm_size_mb)
         segments_n = len(ds_segments_bounds)
-        print('DONE {:.2f} sec'.format(time() - t))
-        print(' * segments number:', segments_n)
+        logger.info('Defined segments in {:.2f} sec'.format(time() - t))
+        logger.debug(' * segments number:', segments_n)
 
-        print('Segmenting...', end=' ', flush=True)
+        logger.debug('Segmenting...')
         t = time()
         segm_sizes = []
         for sp_mz_int_buf in parse_dataset_chunks(imzml_parser, coordinates):
@@ -193,14 +194,14 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb):
             .values
         )
 
-        print('DONE {:.2f} sec'.format(time() - t))
+        logger.info('Segmented dataset in {:.2f} sec'.format(time() - t))
 
-        print('Uploading segments...', end=' ', flush=True)
+        logger.debug('Uploading segments...')
         t = time()
         ds_segms_cobjects = upload_segments(storage, segments_dir, segments_n)
-        print('DONE {:.2f} sec'.format(time() - t))
+        logger.info('Uploaded segments in {:.2f} sec'.format(time() - t))
 
-        print('--- {:.2f} sec ---'.format(time() - start))
+        logger.info('load_and_split_ds_vm total: {:.2f} sec'.format(time() - start))
 
         return imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len
 
