@@ -67,20 +67,28 @@ class Pipeline(object):
 
             if use_cache and self.cacher.exists(cache_key):
                 self.formula_cobjects, self.db_data_cobjects = self.cacher.load(cache_key)
+                logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
+                            f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
                 self.formula_cobjects, self.db_data_cobjects = build_database_local(
                     self.storage, db_bucket, self.db_config, self.ds_config
                 )
+                logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
+                            f' {len(self.db_data_cobjects)} db_data objects')
                 self.cacher.save((self.formula_cobjects, self.db_data_cobjects), cache_key)
         else:
             cache_key = ':db/build_database.cache'
 
             if use_cache and self.cacher.exists(cache_key):
                 self.formula_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
+                logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
+                            f' {len(self.formula_to_id_cobjects)} formula-to-id chunks from cache')
             else:
                 self.formula_cobjects, self.formula_to_id_cobjects = build_database(
                     self.pywren_executor, db_bucket, self.db_config
                 )
+                logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
+                            f' {len(self.formula_to_id_cobjects)} formula-to-id chunks')
                 self.cacher.save((self.formula_cobjects, self.formula_to_id_cobjects), cache_key)
 
         if debug_validate:
@@ -90,10 +98,12 @@ class Pipeline(object):
         cache_key = ':ds/:db/calculate_centroids.cache'
         if use_cache and self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
+            logger.info(f'Loaded {len(self.peaks_cobjects)} centroid chunks from cache')
         else:
             self.peaks_cobjects = calculate_centroids(
                 self.pywren_executor, self.formula_cobjects, self.ds_config
             )
+            logger.info(f'Calculated {len(self.peaks_cobjects)} centroid chunks')
             self.cacher.save(self.peaks_cobjects, cache_key)
 
         if debug_validate:

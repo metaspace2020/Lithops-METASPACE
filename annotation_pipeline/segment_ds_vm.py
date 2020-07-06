@@ -200,7 +200,7 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32)
         segments_dir = Path(tmp_dir) / 'segments'
         segments_dir.mkdir()
 
-        logger.debug('Downloading dataset...')
+        logger.info('Downloading dataset...')
         t = time()
         imzml_path, ibd_path = download_dataset(
             ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage
