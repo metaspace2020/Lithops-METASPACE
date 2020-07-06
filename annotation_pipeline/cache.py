@@ -5,35 +5,52 @@ from annotation_pipeline.utils import get_ibm_cos_client, list_keys, clean_from_
 
 
 class PipelineCacher:
-    def __init__(self, pw, dataset_name):
+    def __init__(self, pw, namespace, ds_name, db_name):
         self.pywren_executor = pw
         self.config = self.pywren_executor.config
 
         self.storage_handler = get_ibm_cos_client(self.config)
         self.bucket = self.config['pywren']['storage_bucket']
-        self.prefix = f'metabolomics/cache/{dataset_name}'
+        self.prefixes = {
+            '': f'metabolomics/cache/{namespace}',
+            ':ds': f'metabolomics/cache/{namespace}/{ds_name}/',
+            ':db': f'metabolomics/cache/{namespace}/{db_name}/',
+            ':ds/:db': f'metabolomics/cache/{namespace}/{ds_name}/{db_name}/',
+        }
+
+    def resolve_key(self, key):
+        parts = key.rsplit('/', maxsplit=1)
+        if len(parts) == 1:
+            return self.prefixes[''] + parts[0]
+        else:
+            prefix, suffix = parts
+            return self.prefixes[prefix] + suffix
 
     def load(self, key):
-        data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=key)['Body']
+        data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=self.resolve_key(key))['Body']
         return pickle.loads(data_stream.read())
 
     def save(self, data, key):
         p = pickle.dumps(data)
-        self.storage_handler.put_object(Bucket=self.bucket, Key=key, Body=p)
+        self.storage_handler.put_object(Bucket=self.bucket, Key=self.resolve_key(key), Body=p)
 
     def exists(self, key):
         try:
-            self.storage_handler.head_object(Bucket=self.bucket, Key=key)
+            self.storage_handler.head_object(Bucket=self.bucket, Key=self.resolve_key(key))
             return True
         except Exception:
             return False
 
     def clean(self):
-        keys = list_keys(self.bucket, self.prefix, self.storage_handler)
+        keys = [key
+                for prefix in self.prefixes.values()
+                for key in list_keys(self.bucket, prefix, self.storage_handler)]
 
         cobjects_to_clean = []
         for cache_key in keys:
-            cache_data = self.load(cache_key)
+            data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=cache_key)['Body']
+            cache_data = pickle.loads(data_stream.read())
+
             if isinstance(cache_data, tuple):
                 for obj in cache_data:
                     if isinstance(obj, list):
@@ -48,4 +65,5 @@ class PipelineCacher:
                 cobjects_to_clean.append(cache_data)
 
         self.pywren_executor.clean(cs=cobjects_to_clean)
-        clean_from_cos(self.config, self.bucket, self.prefix, self.storage_handler)
+        for prefix in self.prefixes.values():
+            clean_from_cos(self.config, self.bucket, prefix, self.storage_handler)

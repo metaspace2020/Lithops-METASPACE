@@ -1,12 +1,12 @@
-from itertools import repeat, product
+from functools import partial
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-import msgpack_numpy as msgpack
 import pandas as pd
 import pickle
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, clean_from_cos, read_object_with_retry
+from annotation_pipeline.metaspace_fdr import FDR
+from annotation_pipeline.utils import logger, read_object_with_retry
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -14,81 +14,82 @@ N_FORMULAS_SEGMENTS = 256
 FORMULA_TO_ID_CHUNK_MB = 512
 
 
-def build_database_local(storage, config, input_db):
-    bucket = config["storage"]["db_bucket"]
-    formulas_chunks_prefix = input_db["formulas_chunks"]
-    formula_to_id_chunks_prefix = input_db["formula_to_id_chunks"]
-    clean_from_cos(config, bucket, formulas_chunks_prefix)
-    clean_from_cos(config, bucket, formula_to_id_chunks_prefix)
-
-    formulas_df = get_formulas_df(storage, bucket, input_db)
+def build_database_local(storage, db_bucket, db_config, ds_config):
+    db_data_cobjects, formulas_df = get_formulas_df(storage, db_bucket, db_config, ds_config)
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
-    n_formulas_chunks = store_formula_segments(storage, bucket, formulas_chunks_prefix, formulas_df)
-    logger.info(f'Stored {num_formulas} formulas in {n_formulas_chunks} chunks')
+    formula_cobjects = store_formula_segments(storage, formulas_df)
+    logger.info(f'Stored {num_formulas} formulas in {len(formula_cobjects)} chunks')
 
-    n_formula_to_id = store_formula_to_id(storage, bucket, formula_to_id_chunks_prefix, formulas_df)
-    logger.info(f'Built {n_formula_to_id} formula_to_id dictionaries chunks')
-
-    return num_formulas, n_formulas_chunks
+    return formula_cobjects, db_data_cobjects
 
 
-def _generate_formulas(args):
-    mols, modifier, adduct = args
-    return list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
+def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
+    fdr_config = {'decoy_sample_size': ds_config['num_decoys']}
+    nonempty_modifiers = [m for m in modifiers if m]
+    fdr = FDR(fdr_config, [], nonempty_modifiers, adducts, 2)
+    fdr.decoy_adducts_selection(mols)
+    formulas = [
+        (formula, modifier, safe_generate_ion_formula(formula, modifier))
+        for formula, modifier in fdr.ion_tuples()
+    ]
+    formula_map_df = pd.DataFrame(formulas, columns=['formula', 'modifier', 'ion_formula'])
+    return fdr, formula_map_df
 
 
-def get_formulas_df(storage, bucket, input_db):
-    adducts = [*input_db['adducts'], *DECOY_ADDUCTS]
+def get_formulas_df(storage, db_bucket, input_db, ds_config):
+    adducts = input_db['adducts']
     modifiers = input_db['modifiers']
     databases = input_db['databases']
 
     # Load databases
     def _get_mols(mols_key):
-        return pickle.loads(read_object_with_retry(storage, bucket, mols_key))
+        return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
 
     with ThreadPoolExecutor(max_workers=128) as pool:
         dbs = list(pool.map(_get_mols, databases))
 
     # Calculate formulas
-    formulas = set()
+    db_datas = []
+    ion_formula = set()
     with ProcessPoolExecutor() as ex:
-        for chunk in ex.map(_generate_formulas, product(dbs, modifiers, adducts)):
-            formulas.update(chunk)
+        func = partial(_get_db_fdr_and_formulas, ds_config, modifiers, adducts)
+        for db, (fdr, formula_map_df) in zip(databases, ex.map(func, dbs)):
+            db_datas.append((db, fdr, formula_map_df))
+            ion_formula.update(formula_map_df.ion_formula)
 
-    if None in formulas:
-        formulas.remove(None)
+    if None in ion_formula:
+        ion_formula.remove(None)
 
-    return pd.DataFrame({'formula': sorted(formulas)}).rename_axis(index='formula_i')
+    formulas_df = pd.DataFrame({'ion_formula': sorted(ion_formula)}).rename_axis(index='formula_i')
+    formula_to_id = pd.Series(formulas_df.index, formulas_df.ion_formula)
+    for db, fdr, formula_map_df in db_datas:
+        formula_map_df['formula_i'] = formula_to_id[formula_map_df.ion_formula].values
+        del formula_map_df['ion_formula']
+
+    def _store_db_data(db_data):
+        return storage.put_cobject(pickle.dumps(db_data))
+
+    with ThreadPoolExecutor() as pool:
+        db_data_cobjects = list(pool.map(_store_db_data, db_datas))
+
+    return db_data_cobjects, formulas_df
 
 
-def store_formula_segments(storage, bucket, formulas_chunks_prefix, formulas_df):
-    subsegm_size = math.ceil(len(formulas_df) / N_FORMULAS_SEGMENTS)
-    segm_list = [formulas_df[i:i+subsegm_size] for i in range(0, len(formulas_df), subsegm_size)]
+def store_formula_segments(storage, formulas_df):
+    segm_bounds = [len(formulas_df) * i // N_FORMULAS_SEGMENTS for i in range(N_FORMULAS_SEGMENTS+1)]
+    segm_ranges = list(zip(segm_bounds[:-1], segm_bounds[1:]))
+    segm_list = [formulas_df.ion_formula.iloc[start:end] for start, end in segm_ranges]
 
-    def _store(segm_i):
-        storage.put_object(Bucket=bucket,
-                           Key=f'{formulas_chunks_prefix}/{segm_i}.msgpack',
-                           Body=segm_list[segm_i].to_msgpack())
+    def _store(segm):
+        return storage.put_cobject(segm.to_msgpack())
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        pool.map(_store, range(len(segm_list)))
+        formula_cobjects = list(pool.map(_store, segm_list))
 
-    return len(segm_list)
+    assert len(formula_cobjects) == len(set(co.key for co in formula_cobjects)), 'Duplicate CloudObjects in formula_cobjects'
+
+    return formula_cobjects
 
 
-def store_formula_to_id(storage, bucket, formula_to_id_chunks_prefix, formulas_df):
-    num_formulas = len(formulas_df)
-    n_formula_to_id = int(math.ceil(num_formulas * 200 / (FORMULA_TO_ID_CHUNK_MB * 1024 ** 2)))
-    for ch_i in range(n_formula_to_id):
-        print(f'Storing formula_to_id dictionary chunk {ch_i}')
-        start_idx = num_formulas * ch_i // n_formula_to_id
-        end_idx = num_formulas * (ch_i + 1) // n_formula_to_id
-
-        formula_to_id = formulas_df.iloc[start_idx:end_idx].formula.to_dict()
-
-        storage.put_object(Bucket=bucket,
-                           Key=f'{formula_to_id_chunks_prefix}/{ch_i}.msgpack',
-                           Body=msgpack.dumps(formula_to_id))
-    return n_formula_to_id

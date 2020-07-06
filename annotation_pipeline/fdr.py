@@ -20,7 +20,7 @@ def msgpack_load_text(stream):
     return msgpack.load(stream, encoding='utf-8')
 
 
-def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
+def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects, formula_scores_df):
 
     def build_ranking(group_i, ranking_i, database, modifier, adduct, id, storage):
         print("Building ranking...")
@@ -42,9 +42,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_scores_df):
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), adducts))
 
         formula_to_id = {}
-        keys = list_keys(bucket, f'{input_db["formula_to_id_chunks"]}/', storage)
-        for key in keys:
-            formula_to_id_chunk = read_object_with_retry(storage, bucket, key, msgpack_load_text)
+        for cobject in formula_to_id_cobjects:
+            formula_to_id_chunk = read_cloud_object_with_retry(storage, cobject, msgpack_load_text)
 
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
@@ -132,3 +131,31 @@ def calculate_fdrs(pw, rankings_df):
     append_pywren_stats(futures, memory_mb=memory_capacity_mb)
 
     return pd.concat(results)
+
+
+def calculate_fdrs_vm(pw, formula_scores_df, db_data_cobjects):
+    msms_df = formula_scores_df[['msm']]
+
+    def run_fdr(db_data_cobject, storage):
+        db, fdr, formula_map_df = pickle.loads(storage.get_cobject(db_data_cobject))
+
+        formula_msm = formula_map_df.merge(msms_df, how='inner', left_on='formula_i', right_index=True)
+        modifiers = fdr.target_modifiers_df[['neutral_loss','adduct']].rename(columns={'neutral_loss': 'modifier'})
+        results_df = (
+            fdr.estimate_fdr(formula_msm)
+            .assign(database_path=db)
+            .set_index('formula_i')
+            .rename(columns={'modifier': 'combined_modifier', 'formula': 'mol'})
+            .merge(modifiers, left_on='combined_modifier', right_index=True)
+            .drop(columns=['combined_modifier'])
+        )
+        return results_df
+
+
+    memory_capacity_mb = 256
+    futures = pw.map(run_fdr, db_data_cobjects, runtime_memory=memory_capacity_mb)
+    results_dfs = pw.get_result(futures)
+    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
+
+    return pd.concat(results_dfs)
+

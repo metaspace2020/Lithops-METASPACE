@@ -12,14 +12,13 @@
   },
   "pywren": {
     "storage_bucket": "****",
+    "storage_backend": "ibm_cos",
     "runtime": "ibmfunctions/pywren-metabolomics:3.6",
     "include_modules": ["annotation_pipeline"],
     "runtime_timeout": 1200,
     "data_limit": false
   },
   "storage": {
-    "ds_bucket": "****",
-    "db_bucket": "****",
-    "output_bucket": "****"
+    "db_bucket": "****"
   }
 }

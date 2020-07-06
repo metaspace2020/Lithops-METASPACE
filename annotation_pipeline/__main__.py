@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from annotation_pipeline.utils import get_ibm_cos_client
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.molecular_db import build_database, calculate_centroids, upload_mol_dbs_from_dir
+from annotation_pipeline.molecular_db import upload_mol_dbs_from_dir
 
 logger = logging.getLogger(name='annotation_pipeline')
 
@@ -41,12 +41,9 @@ def generate_centroids(args, config):
     databases_path = Path(Path(input_db['databases'][0]).parent)
     upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], databases_path, databases_path)
 
-    build_database(config, input_db)
-    # Use '+' if missing from the config, but it's better to get the actual value as it affects the results
-    polarity = input_ds['polarity']
-    # Use 0.001238 if missing from the config, but it's better to get the actual value as it affects the results
-    isocalc_sigma = input_ds['isocalc_sigma']
-    calculate_centroids(config, input_db, polarity, isocalc_sigma)
+    pipeline = Pipeline(config, input_ds, input_db)
+    pipeline.build_database()
+    pipeline.calculate_centroids()
 
 
 def convert_imzml(args, config):

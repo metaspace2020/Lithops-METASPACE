@@ -161,9 +161,9 @@ def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
     raise last_exception
 
 
-def read_ranges_from_url(url, ranges):
+def read_ranges_from_url(storage, url, ranges):
     """
-    Download partial ranges from a file over HTTP. This combines adjacent/overlapping ranges
+    Download partial ranges from a file over HTTP/COS. This combines adjacent/overlapping ranges
     to minimize the number of HTTP requests without wasting any bandwidth if there are large gaps
     between requested ranges.
     """
@@ -193,7 +193,11 @@ def read_ranges_from_url(url, ranges):
     with ThreadPoolExecutor() as ex:
         def get_range(lo_hi):
             lo, hi = lo_hi
-            return requests.get(url, headers={'Range': f'bytes={lo}-{hi}'}).content
+            if url.startswith('cos://'):
+                bucket, key = url[len('cos://'):].split('/', maxsplit=1)
+                return storage.get_object(Bucket=bucket, Key=key, Range=f'bytes={lo}-{hi}')['Body'].read()
+            else:
+                return requests.get(url, headers={'Range': f'bytes={lo}-{hi}'}).content
         request_results = list(ex.map(get_range, request_ranges))
 
     return [request_results[request_i][request_lo:request_hi]
