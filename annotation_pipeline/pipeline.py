@@ -31,7 +31,10 @@ class Pipeline(object):
         storage_handler.bucket = self.config['pywren']['storage_bucket']
         self.storage = storage_handler.get_client()
 
-        self.cacher = PipelineCacher(self.pywren_executor, self.ds_config["name"], self.db_config["name"])
+        cache_namespace = 'vm' if vm_algorithm else 'function'
+        self.cacher = PipelineCacher(
+            self.pywren_executor, cache_namespace, self.ds_config["name"], self.db_config["name"]
+        )
         if not self.use_cache:
             self.cacher.clean()
 

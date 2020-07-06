@@ -5,17 +5,17 @@ from annotation_pipeline.utils import get_ibm_cos_client, list_keys, clean_from_
 
 
 class PipelineCacher:
-    def __init__(self, pw, ds_name, db_name):
+    def __init__(self, pw, namespace, ds_name, db_name):
         self.pywren_executor = pw
         self.config = self.pywren_executor.config
 
         self.storage_handler = get_ibm_cos_client(self.config)
         self.bucket = self.config['pywren']['storage_bucket']
         self.prefixes = {
-            '': 'metabolomics/cache/',
-            ':ds': f'metabolomics/cache/{ds_name}/',
-            ':db': f'metabolomics/cache/{db_name}/',
-            ':ds/:db': f'metabolomics/cache/{ds_name}/{db_name}/',
+            '': f'metabolomics/cache/{namespace}',
+            ':ds': f'metabolomics/cache/{namespace}/{ds_name}/',
+            ':db': f'metabolomics/cache/{namespace}/{db_name}/',
+            ':ds/:db': f'metabolomics/cache/{namespace}/{ds_name}/{db_name}/',
         }
 
     def resolve_key(self, key):
