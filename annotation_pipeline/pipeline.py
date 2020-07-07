@@ -6,8 +6,8 @@ import pandas as pd
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
 from annotation_pipeline.fdr import build_fdr_rankings, calculate_fdrs, calculate_fdrs_vm
 from annotation_pipeline.image import create_process_segment
-from annotation_pipeline.molecular_db import build_database, calculate_centroids, validate_formula_cobjects, \
-    validate_peaks_cobjects
+from annotation_pipeline.molecular_db import upload_mol_dbs_from_dir, build_database, calculate_centroids, \
+    validate_formula_cobjects, validate_peaks_cobjects
 from annotation_pipeline.molecular_db_local import build_database_local
 from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segment_spectra, segment_centroids, \
     clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments, validate_ds_segments
@@ -47,6 +47,7 @@ class Pipeline(object):
         }
 
     def __call__(self, debug_validate=False):
+        self.upload_molecular_databases()
         self.build_database(debug_validate=debug_validate)
         self.calculate_centroids(debug_validate=debug_validate)
         self.load_ds()
@@ -59,8 +60,18 @@ class Pipeline(object):
         if debug_validate and self.ds_config['metaspace_id']:
             self.check_results()
 
+    def upload_molecular_databases(self, use_cache=True):
+        mol_dbs_cache_key = ':db/upload_molecular_databases.cache'
+
+        if use_cache and self.cacher.exists(mol_dbs_cache_key):
+            self.mols_dbs_cobjects = self.cacher.load(mol_dbs_cache_key)
+            logger.info(f'Loaded {len(self.mols_dbs_cobjects)} molecular databases from cache')
+        else:
+            self.mols_dbs_cobjects = upload_mol_dbs_from_dir(self.storage, self.db_config['databases'])
+            logger.info(f'Uploaded {len(self.mols_dbs_cobjects)} molecular databases')
+            self.cacher.save(self.mols_dbs_cobjects, mol_dbs_cache_key)
+
     def build_database(self, use_cache=True, debug_validate=False):
-        db_bucket = self.config["storage"]["db_bucket"]
 
         if self.vm_algorithm:
             cache_key = ':ds/:db/build_database_vm.cache'
@@ -71,7 +82,7 @@ class Pipeline(object):
                             f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
                 self.formula_cobjects, self.db_data_cobjects = build_database_local(
-                    self.storage, db_bucket, self.db_config, self.ds_config
+                    self.storage, self.db_config, self.ds_config, self.mols_dbs_cobjects
                 )
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects')
@@ -85,7 +96,7 @@ class Pipeline(object):
                             f' {len(self.formula_to_id_cobjects)} formula-to-id chunks from cache')
             else:
                 self.formula_cobjects, self.formula_to_id_cobjects = build_database(
-                    self.pywren_executor, db_bucket, self.db_config
+                    self.pywren_executor, self.db_config, self.mols_dbs_cobjects
                 )
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.formula_to_id_cobjects)} formula-to-id chunks')

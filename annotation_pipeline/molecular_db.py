@@ -1,6 +1,4 @@
 from itertools import repeat
-from pathlib import Path
-from ibm_botocore.client import ClientError
 from concurrent.futures import ThreadPoolExecutor
 import msgpack_numpy as msgpack
 import pandas as pd
@@ -9,19 +7,17 @@ import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, get_ibm_cos_client, append_pywren_stats, \
-    read_object_with_retry, read_cloud_object_with_retry
+from annotation_pipeline.utils import logger, append_pywren_stats, read_cloud_object_with_retry
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
 N_HASH_CHUNKS = 32  # should be less than N_FORMULAS_SEGMENTS
 
 
-def build_database(pw, db_bucket, db_config):
+def build_database(pw, db_config, mols_dbs_cobjects):
 
     adducts = [*db_config['adducts'], *DECOY_ADDUCTS]
     modifiers = db_config['modifiers']
-    databases = db_config['databases']
 
     def hash_formula_to_chunk(formula):
         m = hashlib.md5()
@@ -31,11 +27,11 @@ def build_database(pw, db_bucket, db_config):
     def generate_formulas(adduct, storage):
         print(f'Generating formulas for adduct {adduct}')
 
-        def _get_mols(mols_key):
-            return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
+        def _get_mols(mols_cobj):
+            return pickle.loads(read_cloud_object_with_retry(storage, mols_cobj))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
-            mols_list = list(pool.map(_get_mols, databases))
+            mols_list = list(pool.map(_get_mols, mols_dbs_cobjects))
 
         formulas = set()
 
@@ -206,23 +202,13 @@ def calculate_centroids(pw, formula_cobjects, ds_config):
     return peaks_cobjects
 
 
-def upload_mol_db_from_file(config, bucket, key, path, force=False):
-    ibm_cos = get_ibm_cos_client(config)
-    try:
-        ibm_cos.head_object(Bucket=bucket, Key=key)
-        should_dump = force
-    except ClientError:
-        should_dump = True
-
-    if should_dump:
+def upload_mol_dbs_from_dir(storage, databases_paths):
+    mol_dbs_cobjects = []
+    for path in databases_paths:
         mol_sfs = sorted(set(pd.read_csv(path).sf))
-        ibm_cos.put_object(Bucket=bucket, Key=key, Body=pickle.dumps(mol_sfs))
-
-
-def upload_mol_dbs_from_dir(config, bucket, key_prefix, path, force=False):
-    for file in Path(path).glob('mol_db*.csv'):
-        key = f'{key_prefix}/{file.stem}.pickle'
-        upload_mol_db_from_file(config, bucket, key, file, force)
+        cobj = storage.put_cobject(pickle.dumps(mol_sfs))
+        mol_dbs_cobjects.append(cobj)
+    return mol_dbs_cobjects
 
 
 def validate_formula_cobjects(storage, formula_cobjects):

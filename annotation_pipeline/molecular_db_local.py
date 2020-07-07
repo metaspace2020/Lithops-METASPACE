@@ -2,11 +2,10 @@ from functools import partial
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import pandas as pd
 import pickle
-import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.metaspace_fdr import FDR
-from annotation_pipeline.utils import logger, read_object_with_retry
+from annotation_pipeline.utils import logger, read_cloud_object_with_retry
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -14,8 +13,8 @@ N_FORMULAS_SEGMENTS = 256
 FORMULA_TO_ID_CHUNK_MB = 512
 
 
-def build_database_local(storage, db_bucket, db_config, ds_config):
-    db_data_cobjects, formulas_df = get_formulas_df(storage, db_bucket, db_config, ds_config)
+def build_database_local(storage, db_config, ds_config, mols_dbs_cobjects):
+    db_data_cobjects, formulas_df = get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects)
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
@@ -38,25 +37,24 @@ def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
     return fdr, formula_map_df
 
 
-def get_formulas_df(storage, db_bucket, input_db, ds_config):
-    adducts = input_db['adducts']
-    modifiers = input_db['modifiers']
-    databases = input_db['databases']
+def get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects):
+    adducts = db_config['adducts']
+    modifiers = db_config['modifiers']
 
     # Load databases
-    def _get_mols(mols_key):
-        return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
+    def _get_mols(mols_cobj):
+        return pickle.loads(read_cloud_object_with_retry(storage, mols_cobj))
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        dbs = list(pool.map(_get_mols, databases))
+        dbs = list(pool.map(_get_mols, mols_dbs_cobjects))
 
     # Calculate formulas
     db_datas = []
     ion_formula = set()
     with ProcessPoolExecutor() as ex:
         func = partial(_get_db_fdr_and_formulas, ds_config, modifiers, adducts)
-        for db, (fdr, formula_map_df) in zip(databases, ex.map(func, dbs)):
-            db_datas.append((db, fdr, formula_map_df))
+        for db_cobj, (fdr, formula_map_df) in zip(mols_dbs_cobjects, ex.map(func, dbs)):
+            db_datas.append((db_cobj.key, fdr, formula_map_df))
             ion_formula.update(formula_map_df.ion_formula)
 
     if None in ion_formula:
