@@ -229,6 +229,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
 
     assert len(ds_segms_cobjects) == len(set(co.key for co in ds_segms_cobjects)), 'Duplicate CloudObjects in ds_segms_cobjects'
 
+    pw.clean(cs=np.concatenate(first_level_segms_cobjects).tolist())
     return ds_segms_cobjects, ds_segms_len
 
 
@@ -395,6 +396,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
     assert len(db_segms_cobjects) == len(set(co.key for co in db_segms_cobjects)), 'Duplicate CloudObject key in db_segms_cobjects'
 
+    pw.clean(cs=first_level_cobjs)
     return db_segms_cobjects
 
 
