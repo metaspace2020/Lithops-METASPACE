@@ -203,11 +203,14 @@ def calculate_centroids(pw, formula_cobjects, ds_config):
 
 
 def upload_mol_dbs_from_dir(storage, databases_paths):
-    mol_dbs_cobjects = []
-    for path in databases_paths:
+
+    def _upload(path):
         mol_sfs = sorted(set(pd.read_csv(path).sf))
-        cobj = storage.put_cobject(pickle.dumps(mol_sfs))
-        mol_dbs_cobjects.append(cobj)
+        return storage.put_cobject(pickle.dumps(mol_sfs))
+
+    with ThreadPoolExecutor() as pool:
+        mol_dbs_cobjects = list(pool.map(_upload, databases_paths))
+
     return mol_dbs_cobjects
 
 

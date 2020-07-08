@@ -1,13 +1,14 @@
 from itertools import product, repeat
+import os
 import pickle
 import numpy as np
 import pandas as pd
 import msgpack_numpy as msgpack
+from concurrent.futures.thread import ThreadPoolExecutor
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
-from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry, read_cloud_object_with_retry, \
-    list_keys
+from annotation_pipeline.utils import append_pywren_stats, read_cloud_object_with_retry
 
 
 def _get_random_adduct_set(size, adducts, offset):
@@ -133,11 +134,11 @@ def calculate_fdrs(pw, rankings_df):
     return pd.concat(results)
 
 
-def calculate_fdrs_vm(pw, formula_scores_df, db_data_cobjects):
+def calculate_fdrs_vm(storage, formula_scores_df, db_data_cobjects):
     msms_df = formula_scores_df[['msm']]
 
-    def run_fdr(db_data_cobject, storage):
-        db, fdr, formula_map_df = pickle.loads(storage.get_cobject(db_data_cobject))
+    def run_fdr(db_data_cobject):
+        db, fdr, formula_map_df = pickle.loads(read_cloud_object_with_retry(storage, db_data_cobject))
 
         formula_msm = formula_map_df.merge(msms_df, how='inner', left_on='formula_i', right_index=True)
         modifiers = fdr.target_modifiers_df[['neutral_loss','adduct']].rename(columns={'neutral_loss': 'modifier'})
@@ -151,11 +152,8 @@ def calculate_fdrs_vm(pw, formula_scores_df, db_data_cobjects):
         )
         return results_df
 
-
-    memory_capacity_mb = 256
-    futures = pw.map(run_fdr, db_data_cobjects, runtime_memory=memory_capacity_mb)
-    results_dfs = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+        results_dfs = list(pool.map(run_fdr, db_data_cobjects))
 
     return pd.concat(results_dfs)
 

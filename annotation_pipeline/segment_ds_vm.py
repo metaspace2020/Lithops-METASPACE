@@ -10,12 +10,6 @@ from time import time
 import pandas as pd
 
 from annotation_pipeline.utils import logger
-from pywren_ibm_cloud.storage import InternalStorage
-from pywren_ibm_cloud.config import default_config, extract_storage_config
-
-PYWREN_CONFIG = default_config()
-STORAGE_CONFIG = extract_storage_config(PYWREN_CONFIG)
-STORAGE = InternalStorage(STORAGE_CONFIG).storage_handler
 
 
 def download_dataset(imzml_url, ibd_url, local_path, storage):
@@ -42,7 +36,6 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     logger.debug(f' * imzML size: {imzml_size:.2f} mb')
     logger.debug(f' * ibd size: {ibd_size:.2f} mb')
     return imzml_path, ibd_path
-
 
 
 def plan_dataset_chunks(imzml_reader, max_size=512 * 1024 ** 2):

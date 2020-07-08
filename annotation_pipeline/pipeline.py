@@ -254,7 +254,7 @@ class Pipeline(object):
         else:
             if self.vm_algorithm:
                 self.fdrs = calculate_fdrs_vm(
-                    self.pywren_executor,
+                    self.storage,
                     self.formula_metrics_df,
                     self.db_data_cobjects
                 )
