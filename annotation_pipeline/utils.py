@@ -6,7 +6,9 @@ import numpy as np
 import ibm_boto3
 import ibm_botocore
 import pandas as pd
-
+import pyarrow as pa
+from io import BytesIO
+import pickle
 import requests
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
@@ -121,21 +123,47 @@ def get_pixel_indices(coordinates):
     return pixel_indices
 
 
+def serialise_to_file(obj, path):
+    with open(path, 'wb') as file:
+        file.write(pa.serialize(obj).to_buffer())
+
+
+def deserialise_from_file(path):
+    with open(path, 'rb') as file:
+        data = pa.deserialize(file.read())
+    return data
+
+
+def serialise(obj):
+    try:
+        return BytesIO(pa.serialize(obj).to_buffer())
+    except pa.lib.SerializationCallbackError:
+        return BytesIO(pickle.dumps(obj))
+
+
+def deserialise(serialised_obj):
+    data = serialised_obj.read()
+    try:
+        return pa.deserialize(data)
+    except pa.lib.ArrowInvalid:
+        return pickle.loads(data)
+
+
 def read_object_with_retry(storage, bucket, key, stream_reader=None):
     last_exception = None
     for attempt in range(1, 4):
         try:
-            print(f'Reading {key} (attempt {attempt})')
+            logger.debug(f'Reading {key} (attempt {attempt})')
             data_stream = storage.get_object(Bucket=bucket, Key=key)['Body']
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
                 data = data_stream.read()
             length = getattr(data_stream, '_amount_read', 'Unknown')
-            print(f'Reading {key} (attempt {attempt}) - Success ({length} bytes)')
+            logger.debug(f'Reading {key} (attempt {attempt}) - Success ({length} bytes)')
             return data
         except Exception as ex:
-            print(f'Exception reading {key} (attempt {attempt}): ', ex)
+            logger.debug(f'Exception reading {key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
 
@@ -144,17 +172,17 @@ def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
     last_exception = None
     for attempt in range(1, 4):
         try:
-            print(f'Reading {cobject.key} (attempt {attempt})')
+            logger.debug(f'Reading {cobject.key} (attempt {attempt})')
             data_stream = storage.get_cobject(cobject, stream=True)
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
                 data = data_stream.read()
             length = getattr(data_stream, '_amount_read', 'Unknown')
-            print(f'Reading {cobject.key} (attempt {attempt}) - Success ({length} bytes)')
+            logger.debug(f'Reading {cobject.key} (attempt {attempt}) - Success ({length} bytes)')
             return data
         except Exception as ex:
-            print(f'Exception reading {cobject.key} (attempt {attempt}): ', ex)
+            logger.debug(f'Exception reading {cobject.key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
 

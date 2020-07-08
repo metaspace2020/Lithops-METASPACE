@@ -1,4 +1,3 @@
-import pickle
 from itertools import chain
 import pywren_ibm_cloud as pywren
 import pandas as pd
@@ -13,7 +12,7 @@ from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segme
     clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments, validate_ds_segments
 from annotation_pipeline.cache import PipelineCacher
 from annotation_pipeline.segment_ds_vm import load_and_split_ds_vm
-from annotation_pipeline.utils import PyWrenStats, logger, read_cloud_object_with_retry
+from annotation_pipeline.utils import PyWrenStats, logger, deserialise, read_cloud_object_with_retry
 from pywren_ibm_cloud.storage import Storage
 
 
@@ -292,7 +291,7 @@ class Pipeline(object):
 
         def get_target_images(images_cobject, storage):
             images = {}
-            segm_images = pickle.loads(read_cloud_object_with_retry(storage, images_cobject))
+            segm_images = read_cloud_object_with_retry(storage, images_cobject, deserialise)
             for k, v in segm_images.items():
                 if k in targets:
                     images[k] = v

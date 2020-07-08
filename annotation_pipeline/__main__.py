@@ -5,7 +5,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import matplotlib.pyplot as plt
 
-from annotation_pipeline.utils import get_ibm_cos_client
+from annotation_pipeline.utils import get_ibm_cos_client, serialise_to_file
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
 
@@ -26,7 +26,7 @@ def annotate(args, config):
     formula_images = pipeline.get_images()
 
     if output:
-        results_df.to_pickle(output / 'formula_scores_df.pickle')
+        serialise_to_file(results_df, output / 'formula_scores_df')
         for key, image_set in formula_images.items():
             for i, image in enumerate(image_set):
                 if image is not None:

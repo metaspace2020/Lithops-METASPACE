@@ -9,7 +9,7 @@ import numpy as np
 from time import time
 import pandas as pd
 
-from annotation_pipeline.utils import logger
+from annotation_pipeline.utils import logger, serialise_to_file, deserialise_from_file, serialise
 
 
 def download_dataset(imzml_url, ibd_url, local_path, storage):
@@ -118,7 +118,7 @@ def segment_spectra_chunk(chunk_i, sp_mz_int_buf, ds_segments_bounds, ds_segment
         segm_i, (l, r) = args
         segm_start, segm_end = np.searchsorted(sp_mz_int_buf.mz.values, (l, r))
         segm = sp_mz_int_buf.iloc[segm_start:segm_end]
-        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
+        serialise_to_file(segm, ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}')
         return segm_i, len(segm)
 
     with ThreadPoolExecutor(4) as pool:
@@ -135,13 +135,13 @@ def parse_and_segment_chunk(args):
 def upload_segments(storage, ds_segments_path, chunks_n, segments_n):
     def _upload(segm_i):
         segm = pd.concat([
-            pd.read_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
+            deserialise_from_file(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}')
             for chunk_i in range(chunks_n)
         ], ignore_index=True, sort=False)
         segm.sort_values('mz', inplace=True)
         segm.reset_index(drop=True, inplace=True)
-        segm = segm.to_msgpack()
-        logger.debug(f'Uploading segment {segm_i}: {len(segm)} bytes')
+        segm = serialise(segm)
+        logger.debug(f'Uploading segment {segm_i}: {segm.getbuffer().nbytes} bytes')
         return storage.put_cobject(segm)
 
     with ThreadPoolExecutor(os.cpu_count()) as pool:

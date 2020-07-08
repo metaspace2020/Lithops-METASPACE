@@ -1,7 +1,6 @@
-import pickle
 from pywren_ibm_cloud.storage.utils import CloudObject
 
-from annotation_pipeline.utils import get_ibm_cos_client, list_keys, clean_from_cos
+from annotation_pipeline.utils import get_ibm_cos_client, list_keys, clean_from_cos, serialise, deserialise
 
 
 class PipelineCacher:
@@ -28,11 +27,10 @@ class PipelineCacher:
 
     def load(self, key):
         data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=self.resolve_key(key))['Body']
-        return pickle.loads(data_stream.read())
+        return deserialise(data_stream)
 
     def save(self, data, key):
-        p = pickle.dumps(data)
-        self.storage_handler.put_object(Bucket=self.bucket, Key=self.resolve_key(key), Body=p)
+        self.storage_handler.put_object(Bucket=self.bucket, Key=self.resolve_key(key), Body=serialise(data))
 
     def exists(self, key):
         try:
@@ -60,7 +58,7 @@ class PipelineCacher:
         cobjects_to_clean = []
         for cache_key in keys:
             data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=cache_key)['Body']
-            cache_data = pickle.loads(data_stream.read())
+            cache_data = deserialise(data_stream)
 
             if isinstance(cache_data, tuple):
                 for obj in cache_data:

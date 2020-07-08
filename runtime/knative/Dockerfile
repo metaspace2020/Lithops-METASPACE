@@ -32,6 +32,7 @@ RUN pip install --upgrade setuptools six \
         cpyImagingMSpec==0.2.4 \
         pyImagingMSpec==0.1.4 \
         pandas==0.25.1 \
+        pyarrow==0.17.1 \
         scipy==1.3.1 \
         msgpack==0.6.2 \
         msgpack-numpy==0.4.4.3 \

@@ -1,13 +1,11 @@
 from itertools import repeat
 from concurrent.futures import ThreadPoolExecutor
-import msgpack_numpy as msgpack
 import pandas as pd
-import pickle
 import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, PyWrenStats, read_cloud_object_with_retry
+from annotation_pipeline.utils import logger, PyWrenStats, serialise, deserialise, read_cloud_object_with_retry
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
@@ -28,7 +26,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
         print(f'Generating formulas for adduct {adduct}')
 
         def _get_mols(mols_cobj):
-            return pickle.loads(read_cloud_object_with_retry(storage, mols_cobj))
+            return read_cloud_object_with_retry(storage, mols_cobj, deserialise)
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             mols_list = list(pool.map(_get_mols, mols_dbs_cobjects))
@@ -51,7 +49,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
                 formulas_chunks[chunk_i] = [formula]
 
         def _store(chunk_i):
-            return chunk_i, storage.put_cobject(pickle.dumps(formulas_chunks[chunk_i]))
+            return chunk_i, storage.put_cobject(serialise(formulas_chunks[chunk_i]))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             cobjects = dict(pool.map(_store, formulas_chunks.keys()))
@@ -72,7 +70,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
         print(f'Deduplicating formulas chunk {chunk_i}')
         chunk = set()
         for cobject in chunk_cobjects:
-            formulas_chunk_part = pickle.loads(read_cloud_object_with_retry(storage, cobject))
+            formulas_chunk_part = read_cloud_object_with_retry(storage, cobject, deserialise)
             chunk.update(formulas_chunk_part)
 
         return chunk
@@ -102,7 +100,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
         def _store(segm_i):
             id = chunk_i * n_threads + segm_i
             print(f'Storing formulas segment {id}')
-            return storage.put_cobject(segm_list[segm_i].to_msgpack())
+            return storage.put_cobject(serialise(segm_list[segm_i]))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             segm_cobjects = list(pool.map(_store, range(n_threads)))
@@ -132,7 +130,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
         print(f'Storing formula_to_id dictionary chunk {ch_i}')
 
         def _get(cobj):
-            formula_chunk = read_cloud_object_with_retry(storage, cobj, pd.read_msgpack)
+            formula_chunk = read_cloud_object_with_retry(storage, cobj, deserialise)
             formula_to_id_chunk = dict(zip(formula_chunk.values, formula_chunk.index))
             return formula_to_id_chunk
 
@@ -141,7 +139,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
             for chunk_dict in pool.map(_get, input_cobjects):
                 formula_to_id.update(chunk_dict)
 
-        return storage.put_cobject(msgpack.dumps(formula_to_id))
+        return storage.put_cobject(serialise(formula_to_id))
 
     safe_mb = 512
     memory_capacity_mb = formula_to_id_chunk_mb * 2 + safe_mb
@@ -167,14 +165,14 @@ def calculate_centroids(pw, formula_cobjects, ds_config):
 
     def calculate_peaks_chunk(segm_i, segm_cobject, storage):
         print(f'Calculating peaks from formulas chunk {segm_i}')
-        chunk_df = pd.read_msgpack(storage.get_cobject(segm_cobject, stream=True))
+        chunk_df = deserialise(storage.get_cobject(segm_cobject, stream=True))
         peaks = [peak for formula_i, formula in chunk_df.items()
                  for peak in calculate_peaks_for_formula(formula_i, formula)]
         peaks_df = pd.DataFrame(peaks, columns=['formula_i', 'peak_i', 'mz', 'int'])
         peaks_df.set_index('formula_i', inplace=True)
 
         print(f'Storing centroids chunk {id}')
-        peaks_cobject = storage.put_cobject(peaks_df.to_msgpack())
+        peaks_cobject = storage.put_cobject(serialise(peaks_df))
 
         return peaks_cobject, peaks_df.shape[0]
 
@@ -206,7 +204,7 @@ def upload_mol_dbs_from_dir(storage, databases_paths):
 
     def _upload(path):
         mol_sfs = sorted(set(pd.read_csv(path).sf))
-        return storage.put_cobject(pickle.dumps(mol_sfs))
+        return storage.put_cobject(serialise(mol_sfs))
 
     with ThreadPoolExecutor() as pool:
         mol_dbs_cobjects = list(pool.map(_upload, databases_paths))
@@ -215,7 +213,7 @@ def upload_mol_dbs_from_dir(storage, databases_paths):
 
 
 def validate_formula_cobjects(storage, formula_cobjects):
-    segms = [pd.read_msgpack(storage.get_cobject(co)) for co in formula_cobjects]
+    segms = [deserialise(storage.get_cobject(co, stream=True)) for co in formula_cobjects]
 
     formula_sets = []
     index_sets = []
@@ -256,7 +254,7 @@ def validate_formula_cobjects(storage, formula_cobjects):
 
 def validate_peaks_cobjects(pw, peaks_cobjects):
     def get_segm_stats(storage, segm_cobject):
-        segm = pd.read_msgpack(storage.get_cobject(segm_cobject))
+        segm = deserialise(storage.get_cobject(segm_cobject, stream=True))
         n_peaks = segm.groupby(level='formula_i').peak_i.count()
         formula_is = segm.index.unique()
         stats = pd.Series({

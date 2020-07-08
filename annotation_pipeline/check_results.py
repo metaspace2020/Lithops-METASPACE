@@ -36,7 +36,7 @@ def check_results(results_df, ref_results):
     # clean up dataframes for better manual analysis & include only data that should be present in both dataframes
     filtered_results = (results_df
                         .rename({'mol': 'formula'}, axis=1)
-                        [lambda df: (df.database_path == 'metabolomics/db/mol_db1.pickle')
+                        [lambda df: (df.database_path == 'metabolomics/db/mol_db1.csv')
                                     & (df.adduct != '')
                                     & (df.modifier == '')]
                         [['formula', 'adduct', 'chaos', 'spatial', 'spectral', 'msm', 'fdr']])

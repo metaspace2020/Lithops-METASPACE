@@ -1,6 +1,4 @@
 from collections import defaultdict
-import pickle
-
 import numpy as np
 import pandas as pd
 import sys
@@ -11,9 +9,8 @@ from pyimzml.ImzMLParser import ImzMLParser
 
 from annotation_pipeline.image import choose_ds_segments, read_ds_segment
 from annotation_pipeline.utils import logger, get_pixel_indices, PyWrenStats, \
-    read_cloud_object_with_retry, read_ranges_from_url
+    serialise, deserialise, read_cloud_object_with_retry, read_ranges_from_url
 from concurrent.futures import ThreadPoolExecutor
-import msgpack_numpy as msgpack
 
 MAX_MZ_VALUE = 10 ** 5
 
@@ -27,7 +24,7 @@ def get_imzml_reader(pw, imzml_path):
             imzml_stream = requests.get(imzml_path, stream=True).raw
         parser = ImzMLParser(imzml_stream, ibd_file=None)
         imzml_reader = parser.portable_spectrum_reader()
-        imzml_cobject = storage.put_cobject(pickle.dumps(imzml_reader))
+        imzml_cobject = storage.put_cobject(serialise(imzml_reader))
         return imzml_reader, imzml_cobject
 
     memory_capacity_mb = 1024
@@ -88,7 +85,7 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
     def upload_chunk(ch_i, storage):
         chunk_sp_inds = chunks[ch_i]
         # Get imzml_reader from COS because it's too big to include via pywren captured vars
-        imzml_reader = pickle.loads(read_cloud_object_with_retry(storage, imzml_cobject))
+        imzml_reader = read_cloud_object_with_retry(storage, imzml_cobject, deserialise)
         n_spectra = sum(imzml_reader.mzLengths[sp_i] for sp_i in chunk_sp_inds)
         sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
 
@@ -104,7 +101,7 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
         sp_mz_int_buf = sp_mz_int_buf[by_mz]
         del by_mz
 
-        chunk = msgpack.dumps(sp_mz_int_buf)
+        chunk = serialise(sp_mz_int_buf)
         size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
         chunk_cobject = storage.put_cobject(chunk)
@@ -122,7 +119,7 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
 
 def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
     def get_segm_bounds(storage):
-        imzml_reader = pickle.loads(read_cloud_object_with_retry(storage, imzml_cobject))
+        imzml_reader = read_cloud_object_with_retry(storage, imzml_cobject, deserialise)
         sp_n = len(imzml_reader.coordinates)
         sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
         print(f'Sampling {len(sample_sp_inds)} spectra')
@@ -164,14 +161,14 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
 
     def segment_spectra_chunk(chunk_cobject, id, storage):
         print(f'Segmenting spectra chunk {id}')
-        sp_mz_int_buf = read_cloud_object_with_retry(storage, chunk_cobject, msgpack.load)
+        sp_mz_int_buf = read_cloud_object_with_retry(storage, chunk_cobject, deserialise)
 
         def _first_level_segment_upload(segm_i):
             l = ds_segments_bounds[segm_i][0, 0]
             r = ds_segments_bounds[segm_i][-1, 1]
             segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
             segm = sp_mz_int_buf[segm_start:segm_end]
-            return storage.put_cobject(msgpack.dumps(segm))
+            return storage.put_cobject(serialise(segm))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             sub_segms_cobjects = list(pool.map(_first_level_segment_upload, range(len(ds_segments_bounds))))
@@ -189,7 +186,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
         print(f'Merging segment {id} spectra chunks')
 
         def _merge(ch_i):
-            segm_spectra_chunk = read_cloud_object_with_retry(storage, segm_cobjects[ch_i], msgpack.load)
+            segm_spectra_chunk = read_cloud_object_with_retry(storage, segm_cobjects[ch_i], deserialise)
             return segm_spectra_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -213,7 +210,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
             base_id = sum([len(bounds) for bounds in ds_segments_bounds[:id]])
             segm_i = base_id + segm_j
             print(f'Storing dataset segment {segm_i}')
-            segms_cobjects.append(storage.put_cobject(msgpack.dumps(sub_segm)))
+            segms_cobjects.append(storage.put_cobject(serialise(sub_segm)))
 
         return segms_len, segms_cobjects
 
@@ -236,13 +233,13 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
 def clip_centr_df(pw, peaks_cobjects, mz_min, mz_max):
     def clip_centr_df_chunk(peaks_i, peaks_cobject, storage):
         print(f'Clipping centroids dataframe chunk {peaks_i}')
-        centroids_df_chunk = pd.read_msgpack(storage.get_cobject(peaks_cobject)).sort_values('mz')
+        centroids_df_chunk = deserialise(storage.get_cobject(peaks_cobject, stream=True)).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
 
         ds_mz_range_unique_formulas = centroids_df_chunk[(mz_min < centroids_df_chunk.mz) &
                                                          (centroids_df_chunk.mz < mz_max)].index.unique()
         centr_df_chunk = centroids_df_chunk[centroids_df_chunk.index.isin(ds_mz_range_unique_formulas)].reset_index()
-        clip_centr_chunk_cobject = storage.put_cobject(centr_df_chunk.to_msgpack())
+        clip_centr_chunk_cobject = storage.put_cobject(serialise(centr_df_chunk))
 
         return clip_centr_chunk_cobject, centr_df_chunk.shape[0]
 
@@ -263,7 +260,7 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds
 
     def get_first_peak_mz(cobject, id, storage):
         print(f'Extracting first peak mz values from clipped centroids dataframe {id}')
-        centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+        centr_df = read_cloud_object_with_retry(storage, cobject, deserialise)
         first_peak_df = centr_df[centr_df.peak_i == 0]
         return first_peak_df.mz.values
 
@@ -302,13 +299,13 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
     def segment_centr_chunk(cobject, id, storage):
         print(f'Segmenting clipped centroids dataframe chunk {id}')
-        centr_df = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+        centr_df = read_cloud_object_with_retry(storage, cobject, deserialise)
         centr_segm_df = segment_centr_df(centr_df, first_level_centr_segm_bounds)
 
         def _first_level_upload(args):
             segm_i, df = args
             del df['segm_i']
-            return segm_i, storage.put_cobject(df.to_msgpack())
+            return segm_i, storage.put_cobject(serialise(df))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             sub_segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
@@ -326,7 +323,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
         print(f'Merging segment {id} clipped centroids chunks')
 
         def _merge(cobject):
-            segm_centr_df_chunk = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
+            segm_centr_df_chunk = read_cloud_object_with_retry(storage, cobject, deserialise)
             return segm_centr_df_chunk
 
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -370,7 +367,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
             max_ds_segms_to_download_n, max_segm = segms[0]
 
         def _second_level_upload(df):
-            return storage.put_cobject(df.to_msgpack())
+            return storage.put_cobject(serialise(df))
 
         print(f'Storing {len(segms)} centroids segments')
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -402,7 +399,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
 def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
     def get_segm_stats(storage, segm_cobject):
-        segm = pd.read_msgpack(storage.get_cobject(segm_cobject))
+        segm = deserialise(storage.get_cobject(segm_cobject, stream=True))
         mzs = np.sort(segm.mz.values)
         ds_segm_lo, ds_segm_hi = choose_ds_segments(ds_segms_bounds, segm, ppm)
         n_peaks = segm.groupby('formula_i').peak_i.count()
