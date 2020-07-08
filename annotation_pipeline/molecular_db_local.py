@@ -1,6 +1,7 @@
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import pandas as pd
+from time import time
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.metaspace_fdr import FDR
@@ -13,14 +14,19 @@ FORMULA_TO_ID_CHUNK_MB = 512
 
 
 def build_database_local(storage, db_config, ds_config, mols_dbs_cobjects):
+    t = time()
+
+    logger.info('Generating formulas...')
     db_data_cobjects, formulas_df = get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects)
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
+    logger.info('Storing formulas...')
     formula_cobjects = store_formula_segments(storage, formulas_df)
     logger.info(f'Stored {num_formulas} formulas in {len(formula_cobjects)} chunks')
 
-    return formula_cobjects, db_data_cobjects
+    exec_time = time() - t
+    return formula_cobjects, db_data_cobjects, exec_time
 
 
 def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
