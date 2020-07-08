@@ -1,5 +1,5 @@
 {
-  "name": "ds_config5",
+  "name": "db_config5",
   "databases": [
     "metabolomics/db/mol_db1.csv",
     "metabolomics/db/mol_db2.csv",

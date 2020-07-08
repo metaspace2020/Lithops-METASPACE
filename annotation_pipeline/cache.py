@@ -41,9 +41,20 @@ class PipelineCacher:
         except Exception:
             return False
 
-    def clean(self):
+    def clean(self, database=True, dataset=True, hard=False):
+        unique_prefixes = []
+        if not hard:
+            if database:
+                unique_prefixes.append(self.prefixes[':db'])
+            if dataset:
+                unique_prefixes.append(self.prefixes[':ds'])
+            if not database or not dataset:
+                unique_prefixes.append(self.prefixes[':ds/:db'])
+        else:
+            unique_prefixes.append(self.prefixes[''])
+
         keys = [key
-                for prefix in self.prefixes.values()
+                for prefix in unique_prefixes
                 for key in list_keys(self.bucket, prefix, self.storage_handler)]
 
         cobjects_to_clean = []
@@ -65,5 +76,5 @@ class PipelineCacher:
                 cobjects_to_clean.append(cache_data)
 
         self.pywren_executor.clean(cs=cobjects_to_clean)
-        for prefix in self.prefixes.values():
+        for prefix in unique_prefixes:
             clean_from_cos(self.config, self.bucket, prefix, self.storage_handler)
