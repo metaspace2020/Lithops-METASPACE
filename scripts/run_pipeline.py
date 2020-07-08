@@ -32,15 +32,16 @@ if __name__ == '__main__':
     ds_config = json.load(args.ds)
     db_config = json.load(args.db)
 
-    start = time.time()
     pipeline = Pipeline(config, ds_config, db_config, use_cache=args.use_cache, vm_algorithm=args.use_vm)
+
+    start = time.time()
     pipeline(task='db', debug_validate=args.validate)
     print(f'--- database process: {time.time() - start:.2f} seconds ---')
 
     start = time.time()
     pipeline(task='ds', debug_validate=args.validate)
-    results_df = pipeline.get_results()
     print(f'--- dataset process: {time.time() - start:.2f} seconds ---')
 
+    results_df = pipeline.get_results()
     stats = get_pywren_stats()
     print(stats)
