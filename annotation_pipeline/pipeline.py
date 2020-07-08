@@ -46,16 +46,20 @@ class Pipeline(object):
             "ppm": 3.0
         }
 
-    def __call__(self, debug_validate=False):
-        self.upload_molecular_databases()
-        self.build_database(debug_validate=debug_validate)
-        self.calculate_centroids(debug_validate=debug_validate)
-        self.load_ds()
-        self.split_ds()
-        self.segment_ds(debug_validate=debug_validate)
-        self.segment_centroids(debug_validate=debug_validate)
-        self.annotate()
-        self.run_fdr()
+    def __call__(self, task='all', debug_validate=False):
+
+        if task == 'all' or task == 'db':
+            self.upload_molecular_databases()
+            self.build_database(debug_validate=debug_validate)
+            self.calculate_centroids(debug_validate=debug_validate)
+
+        if task == 'all' or task == 'ds':
+            self.load_ds()
+            self.split_ds()
+            self.segment_ds(debug_validate=debug_validate)
+            self.segment_centroids(debug_validate=debug_validate)
+            self.annotate()
+            self.run_fdr()
 
         if debug_validate and self.ds_config['metaspace_id']:
             self.check_results()
@@ -256,8 +260,7 @@ class Pipeline(object):
                 )
             else:
                 rankings_df = build_fdr_rankings(
-                    self.pywren_executor, self.config["storage"]["db_bucket"],
-                    self.ds_config, self.db_config,
+                    self.pywren_executor, self.ds_config, self.db_config, self.mols_dbs_cobjects,
                     self.formula_to_id_cobjects, self.formula_metrics_df
                 )
                 self.fdrs = calculate_fdrs(self.pywren_executor, rankings_df)
