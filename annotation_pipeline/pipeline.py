@@ -72,8 +72,8 @@ class Pipeline(object):
             self.annotate()
             self.run_fdr()
 
-        if debug_validate and self.ds_config['metaspace_id']:
-            self.check_results()
+            if debug_validate and self.ds_config['metaspace_id']:
+                self.check_results()
 
     def upload_molecular_databases(self, use_cache=True):
         cache_key = ':db/upload_molecular_databases.cache'
