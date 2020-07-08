@@ -6,7 +6,6 @@ import numpy as np
 import ibm_boto3
 import ibm_botocore
 import pandas as pd
-import csv
 
 import requests
 
@@ -16,7 +15,38 @@ logging.getLogger('urllib3').setLevel(logging.CRITICAL)
 
 logger = logging.getLogger('annotation-pipeline')
 
-STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
+
+class PyWrenStats:
+    path = None
+
+    @classmethod
+    def init(cls):
+        cls.path = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
+        headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
+        pd.DataFrame([], columns=headers).to_csv(cls.path, index=False)
+
+    @classmethod
+    def append(cls, futures, memory_mb, cloud_objects_n=0):
+        if type(futures) != list:
+            futures = [futures]
+
+        def calc_cost(runtimes, memory_gb):
+            unit_price_in_dollars = 0.000017
+            return sum([unit_price_in_dollars * memory_gb * runtime for runtime in runtimes])
+
+        actions_num = len(futures)
+        func_name = futures[0].function_name
+        runtimes = [future.stats['exec_time'] for future in futures]
+        cost = calc_cost(runtimes, memory_mb / 1024)
+
+        content = [[func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]]
+        pd.DataFrame(content).to_csv(cls.path, mode='a', header=False, index=False)
+
+    @classmethod
+    def get(cls):
+        stats = pd.read_csv(cls.path)
+        print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
+        return stats
 
 
 def get_ibm_cos_client(config):
@@ -89,38 +119,6 @@ def get_pixel_indices(coordinates):
     pixel_indices = _coord[:, 1] * ncols + _coord[:, 0]
     pixel_indices = pixel_indices.astype(np.int32)
     return pixel_indices
-
-
-def append_pywren_stats(futures, memory_mb, cloud_objects_n=0):
-    if type(futures) != list:
-        futures = [futures]
-
-    def calc_cost(runtimes, memory_gb):
-        unit_price_in_dollars = 0.000017
-        return sum([unit_price_in_dollars * memory_gb * runtime for runtime in runtimes])
-
-    actions_num = len(futures)
-    func_name = futures[0].function_name
-    runtimes = [future.stats['exec_time'] for future in futures]
-    cost = calc_cost(runtimes, memory_mb / 1024)
-    headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
-    content = [func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]
-
-    Path('logs').mkdir(exist_ok=True)
-    if not Path(STATUS_PATH).exists():
-        with open(STATUS_PATH, 'w') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=headers)
-            writer.writeheader()
-
-    with open(STATUS_PATH, 'a') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers)
-        writer.writerow(dict(zip(headers, content)))
-
-
-def get_pywren_stats(log_path=STATUS_PATH):
-    stats = pd.read_csv(log_path)
-    print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
-    return stats
 
 
 def read_object_with_retry(storage, bucket, key, stream_reader=None):

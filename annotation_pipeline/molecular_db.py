@@ -7,7 +7,7 @@ import hashlib
 import math
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
-from annotation_pipeline.utils import logger, append_pywren_stats, read_cloud_object_with_retry
+from annotation_pipeline.utils import logger, PyWrenStats, read_cloud_object_with_retry
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
 N_FORMULAS_SEGMENTS = 256
@@ -65,8 +65,8 @@ def build_database(pw, db_config, mols_dbs_cobjects):
     for cobjects_dict in results:
         for chunk_i, cobject in cobjects_dict.items():
             chunk_cobjects[chunk_i].append(cobject)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb,
-                        cloud_objects_n=sum(map(len, chunk_cobjects)))
+    PyWrenStats.append(futures, memory_mb=memory_capacity_mb,
+                       cloud_objects_n=sum(map(len, chunk_cobjects)))
 
     def deduplicate_formulas_chunk(chunk_i, chunk_cobjects, storage):
         print(f'Deduplicating formulas chunk {chunk_i}')
@@ -85,7 +85,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
     futures = pw.map(get_formulas_number_per_chunk, list(enumerate(chunk_cobjects)),
                      runtime_memory=memory_capacity_mb)
     formulas_nums = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
+    PyWrenStats.append(futures, memory_mb=memory_capacity_mb)
 
     def store_formulas_segments(chunk_i, chunk_cobjects, storage):
         chunk = deduplicate_formulas_chunk(chunk_i, chunk_cobjects, storage)
@@ -114,8 +114,8 @@ def build_database(pw, db_config, mols_dbs_cobjects):
                      runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
     formula_cobjects = [segm for segms in results for segm in segms]
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb,
-                        cloud_objects_n=len(formula_cobjects))
+    PyWrenStats.append(futures, memory_mb=memory_capacity_mb,
+                       cloud_objects_n=len(formula_cobjects))
 
     num_formulas = sum(formulas_nums)
     n_formulas_chunks = sum([len(result) for result in results])
@@ -148,7 +148,7 @@ def build_database(pw, db_config, mols_dbs_cobjects):
     futures = pw.map(store_formula_to_id_chunk, list(enumerate(formula_to_id_inputs)),
                      runtime_memory=memory_capacity_mb)
     formula_to_id_cobjects = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=n_formula_to_id)
+    PyWrenStats.append(futures, memory_mb=memory_capacity_mb, cloud_objects_n=n_formula_to_id)
     logger.info(f'Built {n_formula_to_id} formula_to_id dictionaries chunks')
 
     return formula_cobjects, formula_to_id_cobjects
@@ -193,7 +193,7 @@ def calculate_centroids(pw, formula_cobjects, ds_config):
     futures = pw.map(calculate_peaks_chunk, list(enumerate(formula_cobjects)),
                      runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
+    PyWrenStats.append(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     num_centroids = sum(count for cobj, count in results)
     n_centroids_chunks = len(results)

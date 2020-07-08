@@ -13,7 +13,7 @@ from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segme
     clip_centr_df, define_centr_segments, get_imzml_reader, validate_centroid_segments, validate_ds_segments
 from annotation_pipeline.cache import PipelineCacher
 from annotation_pipeline.segment_ds_vm import load_and_split_ds_vm
-from annotation_pipeline.utils import append_pywren_stats, logger, read_cloud_object_with_retry
+from annotation_pipeline.utils import PyWrenStats, logger, read_cloud_object_with_retry
 from pywren_ibm_cloud.storage import Storage
 
 
@@ -37,6 +37,17 @@ class Pipeline(object):
         )
         if not self.use_cache:
             self.cacher.clean()
+
+        stats_path_cache_key = ':ds/:db/stats_path.cache'
+        if self.cacher.exists(stats_path_cache_key):
+            self.stats_path = self.cacher.load(stats_path_cache_key)
+            PyWrenStats.path = self.stats_path
+            logger.info(f'Using cached {self.stats_path} for statistics')
+        else:
+            PyWrenStats.init()
+            self.stats_path = PyWrenStats.path
+            self.cacher.save(self.stats_path, stats_path_cache_key)
+            logger.info(f'Initialised {self.stats_path} for statistics')
 
         self.ds_segm_size_mb = 128
         self.image_gen_config = {
@@ -242,7 +253,7 @@ class Pipeline(object):
             formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
             self.formula_metrics_df = pd.concat(formula_metrics_list)
             self.images_cloud_objs = list(chain(*images_cloud_objs))
-            append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
+            PyWrenStats.append(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
             self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), annotations_cache_key)
 

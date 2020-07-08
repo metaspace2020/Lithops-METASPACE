@@ -3,7 +3,7 @@ import json
 import time
 
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.utils import get_pywren_stats
+from annotation_pipeline.utils import PyWrenStats
 
 import logging
 logging.basicConfig(level=logging.INFO)
@@ -43,5 +43,5 @@ if __name__ == '__main__':
     print(f'--- dataset process: {time.time() - start:.2f} seconds ---')
 
     results_df = pipeline.get_results()
-    stats = get_pywren_stats()
+    stats = PyWrenStats.get()
     print(stats)
