@@ -17,17 +17,18 @@ def _get_random_adduct_set(size, adducts, offset):
 
 
 def build_fdr_rankings(pw, config_ds, config_db, mol_dbs_cobjects, formula_to_id_cobjects, formula_scores_df):
+    mol_db_path_to_cobj = dict(zip(config_db['databases'], mol_dbs_cobjects))
 
-    def build_ranking(group_i, ranking_i, mol_db_cobj, modifier, adduct, id, storage):
+    def build_ranking(group_i, ranking_i, database, modifier, adduct, id, storage):
         print("Building ranking...")
         print(f'job_i: {id}')
         print(f'ranking_i: {ranking_i}')
-        print(f'database: {mol_db_cobj.key}')
+        print(f'database: {database}')
         print(f'modifier: {modifier}')
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        mols = read_cloud_object_with_retry(storage, mol_db_cobj, deserialise)
+        mols = read_cloud_object_with_retry(storage, mol_db_path_to_cobj[database], deserialise)
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -63,11 +64,11 @@ def build_fdr_rankings(pw, config_ds, config_db, mol_dbs_cobjects, formula_to_id
 
     # Create a job for each list of molecules to be ranked
     ranking_jobs = []
-    for group_i, (mol_db_cobj, modifier) in enumerate(product(mol_dbs_cobjects, config_db['modifiers'])):
+    for group_i, (database, modifier) in enumerate(product(config_db['databases'], config_db['modifiers'])):
         # Target and decoy rankings are treated differently. Decoy rankings are identified by not having an adduct.
-        ranking_jobs.extend((group_i, ranking_i, mol_db_cobj, modifier, adduct)
+        ranking_jobs.extend((group_i, ranking_i, database, modifier, adduct)
                              for ranking_i, adduct in enumerate(config_db['adducts']))
-        ranking_jobs.extend((group_i, ranking_i, mol_db_cobj, modifier, None)
+        ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
     memory_capacity_mb = 1536

@@ -48,10 +48,8 @@ class PipelineStats:
         cls._append([[func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]])
 
     @classmethod
-    def append_vm(cls, func_names, exec_times):
-        assert len(func_names) == len(exec_times)
-        content = [[func_names[i], '', '', exec_times[i], '', ''] for i in range(len(func_names))]
-        cls._append(content)
+    def append_vm(cls, func_name, exec_time, cloud_objects_n=0):
+        cls._append([[func_name, 'VM', '', exec_time, '', cloud_objects_n]])
 
     @classmethod
     def get(cls):

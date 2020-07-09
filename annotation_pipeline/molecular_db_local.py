@@ -45,6 +45,7 @@ def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
 def get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects):
     adducts = db_config['adducts']
     modifiers = db_config['modifiers']
+    databases = db_config['databases']
 
     # Load databases
     def _get_mols(mols_cobj):
@@ -58,8 +59,8 @@ def get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects):
     ion_formula = set()
     with ProcessPoolExecutor() as ex:
         func = partial(_get_db_fdr_and_formulas, ds_config, modifiers, adducts)
-        for db_cobj, (fdr, formula_map_df) in zip(mols_dbs_cobjects, ex.map(func, dbs)):
-            db_datas.append((db_cobj.key, fdr, formula_map_df))
+        for db, (fdr, formula_map_df) in zip(databases, ex.map(func, dbs)):
+            db_datas.append((db, fdr, formula_map_df))
             ion_formula.update(formula_map_df.ion_formula)
 
     if None in ion_formula:

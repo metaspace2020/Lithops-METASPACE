@@ -98,7 +98,8 @@ class Pipeline(object):
                 self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = build_database_local(
                     self.storage, self.db_config, self.ds_config, self.mols_dbs_cobjects
                 )
-                PipelineStats.append_vm(['build_database'], [build_db_exec_time])
+                PipelineStats.append_vm('build_database', build_db_exec_time,
+                                        cloud_objects_n=len(self.formula_cobjects))
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects')
                 self.cacher.save((self.formula_cobjects, self.db_data_cobjects), cache_key)
@@ -179,8 +180,12 @@ class Pipeline(object):
             self.ds_segms_cobjects, \
             self.ds_segms_len, \
             ds_segm_stats = result
-            ds_segm_func_names, ds_segm_exec_times = list(zip(*ds_segm_stats))
-            PipelineStats.append_vm(ds_segm_func_names, ds_segm_exec_times)
+            for func_name, exec_time in ds_segm_stats:
+                if func_name == 'upload_segments':
+                    cobjs_n = len(self.ds_segms_cobjects)
+                else:
+                    cobjs_n = 0
+                PipelineStats.append_vm(func_name, exec_time, cloud_objects_n=cobjs_n)
         else:
             if use_cache and self.cacher.exists(cache_key):
                 self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len = \
@@ -270,7 +275,7 @@ class Pipeline(object):
                     self.formula_metrics_df,
                     self.db_data_cobjects
                 )
-                PipelineStats.append_vm(['calculate_fdrs'], [fdr_exec_time])
+                PipelineStats.append_vm('calculate_fdrs', fdr_exec_time)
             else:
                 rankings_df = build_fdr_rankings(
                     self.pywren_executor, self.ds_config, self.db_config, self.mols_dbs_cobjects,
