@@ -87,9 +87,8 @@ class Pipeline(object):
             self.cacher.save(self.mols_dbs_cobjects, cache_key)
 
     def build_database(self, use_cache=True, debug_validate=False):
-        cache_key = ':db/build_database.cache'
-
         if self.vm_algorithm:
+            cache_key = ':ds/:db/build_database.cache'
             if use_cache and self.cacher.exists(cache_key):
                 self.formula_cobjects, self.db_data_cobjects = self.cacher.load(cache_key)
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
@@ -104,6 +103,7 @@ class Pipeline(object):
                             f' {len(self.db_data_cobjects)} db_data objects')
                 self.cacher.save((self.formula_cobjects, self.db_data_cobjects), cache_key)
         else:
+            cache_key = ':db/build_database.cache'
             if use_cache and self.cacher.exists(cache_key):
                 self.formula_cobjects, self.formula_to_id_cobjects = self.cacher.load(cache_key)
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
@@ -120,7 +120,10 @@ class Pipeline(object):
             validate_formula_cobjects(self.storage, self.formula_cobjects)
 
     def calculate_centroids(self, use_cache=True, debug_validate=False):
-        cache_key = ':db/calculate_centroids.cache'
+        if self.vm_algorithm:
+            cache_key = ':ds/:db/calculate_centroids.cache'
+        else:
+            cache_key = ':db/calculate_centroids.cache'
 
         if use_cache and self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
@@ -324,5 +327,5 @@ class Pipeline(object):
         log_bad_results(**checked_results)
         return checked_results
 
-    def clean(self):
-        self.cacher.clean()
+    def clean(self, hard=False):
+        self.cacher.clean(hard=hard)
