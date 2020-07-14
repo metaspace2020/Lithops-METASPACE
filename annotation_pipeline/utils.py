@@ -24,6 +24,7 @@ class PipelineStats:
 
     @classmethod
     def init(cls):
+        Path('logs').mkdir(exist_ok=True)
         cls.path = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
         headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
         pd.DataFrame([], columns=headers).to_csv(cls.path, index=False)
