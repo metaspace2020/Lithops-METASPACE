@@ -39,6 +39,10 @@ def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
         for formula, modifier in fdr.ion_tuples()
     ]
     formula_map_df = pd.DataFrame(formulas, columns=['formula', 'modifier', 'ion_formula'])
+
+    # TODO: check why there are NaN values in 'formula_map_df.ion_formula' on an execution of ds2-db3
+    formula_map_df = formula_map_df[~formula_map_df.ion_formula.isna()]
+
     return fdr, formula_map_df
 
 
