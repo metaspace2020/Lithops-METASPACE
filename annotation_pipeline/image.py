@@ -1,11 +1,9 @@
-import pickle
 import numpy as np
 import pandas as pd
 from scipy.sparse import coo_matrix
 from concurrent.futures import ThreadPoolExecutor
-import msgpack_numpy as msgpack
 
-from annotation_pipeline.utils import ds_dims, get_pixel_indices, read_cloud_object_with_retry
+from annotation_pipeline.utils import ds_dims, get_pixel_indices, serialise, deserialise, read_cloud_object_with_retry
 from annotation_pipeline.validate import make_compute_image_metrics, formula_image_metrics
 ISOTOPIC_PEAK_N = 4
 
@@ -48,7 +46,7 @@ class ImagesManager:
     def save_images(self):
         if self.formula_images:
             print(f'Saving {len(self.formula_images)} images')
-            cloud_obj = self._storage.put_cobject(pickle.dumps(self.formula_images))
+            cloud_obj = self._storage.put_cobject(serialise(self.formula_images))
             self.cloud_objs.append(cloud_obj)
             self._partition += 1
         else:
@@ -107,10 +105,7 @@ def gen_iso_images(sp_inds, sp_mzs, sp_ints, centr_df, nrows, ncols, ppm=3, min_
 
 
 def read_ds_segment(cobject, vm_algorithm, storage):
-    if vm_algorithm:
-        data = read_cloud_object_with_retry(storage, cobject, pd.read_msgpack)
-    else:
-        data = read_cloud_object_with_retry(storage, cobject, msgpack.load)
+    data = read_cloud_object_with_retry(storage, cobject, deserialise)
 
     if isinstance(data, list):
         if isinstance(data[0], np.ndarray):
@@ -195,7 +190,7 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
     def process_centr_segment(db_segm_cobject, id, storage):
         print(f'Reading centroids segment {id}')
         # read database relevant part
-        centr_df = read_cloud_object_with_retry(storage, db_segm_cobject, pd.read_msgpack)
+        centr_df = read_cloud_object_with_retry(storage, db_segm_cobject, deserialise)
 
         # find range of datasets
         first_ds_segm_i, last_ds_segm_i = choose_ds_segments(ds_segments_bounds, centr_df, ppm)
@@ -209,7 +204,7 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
             sp_inds=sp_arr.sp_i.values, sp_mzs=sp_arr.mz.values, sp_ints=sp_arr.int.values,
             centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1
         )
-        safe_mb = 512
+        safe_mb = pw_mem_mb // 2
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
         images_manager = ImagesManager(storage, max_formula_images_mb * 1024 ** 2)

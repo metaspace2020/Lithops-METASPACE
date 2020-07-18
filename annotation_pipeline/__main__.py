@@ -5,10 +5,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 import matplotlib.pyplot as plt
 
-from annotation_pipeline.utils import get_ibm_cos_client
+from annotation_pipeline.utils import get_ibm_cos_client, serialise_to_file
 from annotation_pipeline.imzml import convert_imzml_to_txt
 from annotation_pipeline.pipeline import Pipeline
-from annotation_pipeline.molecular_db import upload_mol_dbs_from_dir
 
 logger = logging.getLogger(name='annotation_pipeline')
 
@@ -27,23 +26,11 @@ def annotate(args, config):
     formula_images = pipeline.get_images()
 
     if output:
-        results_df.to_pickle(output / 'formula_scores_df.pickle')
+        serialise_to_file(results_df, output / 'formula_scores_df')
         for key, image_set in formula_images.items():
             for i, image in enumerate(image_set):
                 if image is not None:
                     plt.imsave(output / f'{key}_{i}.png', image.toarray())
-
-
-def generate_centroids(args, config):
-    input_ds = json.load(args.ds)
-    input_db = json.load(args.db)
-
-    databases_path = Path(Path(input_db['databases'][0]).parent)
-    upload_mol_dbs_from_dir(config, config['storage']['db_bucket'], databases_path, databases_path)
-
-    pipeline = Pipeline(config, input_ds, input_db)
-    pipeline.build_database()
-    pipeline.calculate_centroids()
 
 
 def convert_imzml(args, config):
@@ -111,13 +98,6 @@ if __name__ == '__main__':
                                  nargs='?', help='db_config.json path')
     annotate_parser.add_argument('output', default='output', nargs='?', help='directory to write output files')
     annotate_parser.add_argument('--no-output', action="store_true", help='prevents outputs from being written to file')
-
-    centroids_parser = subparsers.add_parser('generate_centroids')
-    centroids_parser.set_defaults(func=generate_centroids)
-    centroids_parser.add_argument('ds', type=argparse.FileType('r'), default='metabolomics/ds_config2.json',
-                                 nargs='?', help='ds_config.json path')
-    centroids_parser.add_argument('db', type=argparse.FileType('r'), default='metabolomics/db_config2.json',
-                                 nargs='?', help='db_config.json path')
 
     convert_parser = subparsers.add_parser('convert_imzml')
     convert_parser.set_defaults(func=convert_imzml)

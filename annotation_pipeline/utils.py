@@ -6,17 +6,57 @@ import numpy as np
 import ibm_boto3
 import ibm_botocore
 import pandas as pd
-import csv
-
+import pyarrow as pa
+from io import BytesIO
+import pickle
 import requests
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
 logging.getLogger('urllib3').setLevel(logging.CRITICAL)
+logging.getLogger('engine').setLevel(logging.CRITICAL)
 
 logger = logging.getLogger('annotation-pipeline')
 
-STATUS_PATH = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
+
+class PipelineStats:
+    path = None
+
+    @classmethod
+    def init(cls):
+        Path('logs').mkdir(exist_ok=True)
+        cls.path = datetime.now().strftime("logs/%Y-%m-%d_%H:%M:%S.csv")
+        headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
+        pd.DataFrame([], columns=headers).to_csv(cls.path, index=False)
+
+    @classmethod
+    def _append(cls, content):
+        pd.DataFrame(content).to_csv(cls.path, mode='a', header=False, index=False)
+
+    @classmethod
+    def append_pywren(cls, futures, memory_mb, cloud_objects_n=0):
+        if type(futures) != list:
+            futures = [futures]
+
+        def calc_cost(runtimes, memory_gb):
+            pywren_unit_price_in_dollars = 0.000017
+            return sum([pywren_unit_price_in_dollars * memory_gb * runtime for runtime in runtimes])
+
+        actions_num = len(futures)
+        func_name = futures[0].function_name
+        runtimes = [future.stats['exec_time'] for future in futures]
+        cost = calc_cost(runtimes, memory_mb / 1024)
+        cls._append([[func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]])
+
+    @classmethod
+    def append_vm(cls, func_name, exec_time, cloud_objects_n=0):
+        cls._append([[func_name, 'VM', '', exec_time, '', cloud_objects_n]])
+
+    @classmethod
+    def get(cls):
+        stats = pd.read_csv(cls.path)
+        print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
+        return stats
 
 
 def get_ibm_cos_client(config):
@@ -91,53 +131,47 @@ def get_pixel_indices(coordinates):
     return pixel_indices
 
 
-def append_pywren_stats(futures, memory_mb, cloud_objects_n=0):
-    if type(futures) != list:
-        futures = [futures]
-
-    def calc_cost(runtimes, memory_gb):
-        unit_price_in_dollars = 0.000017
-        return sum([unit_price_in_dollars * memory_gb * runtime for runtime in runtimes])
-
-    actions_num = len(futures)
-    func_name = futures[0].function_name
-    runtimes = [future.stats['exec_time'] for future in futures]
-    cost = calc_cost(runtimes, memory_mb / 1024)
-    headers = ['Function', 'Actions', 'Memory', 'AvgRuntime', 'Cost', 'CloudObjects']
-    content = [func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]
-
-    Path('logs').mkdir(exist_ok=True)
-    if not Path(STATUS_PATH).exists():
-        with open(STATUS_PATH, 'w') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=headers)
-            writer.writeheader()
-
-    with open(STATUS_PATH, 'a') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=headers)
-        writer.writerow(dict(zip(headers, content)))
+def serialise_to_file(obj, path):
+    with open(path, 'wb') as file:
+        file.write(pa.serialize(obj).to_buffer())
 
 
-def get_pywren_stats(log_path=STATUS_PATH):
-    stats = pd.read_csv(log_path)
-    print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
-    return stats
+def deserialise_from_file(path):
+    with open(path, 'rb') as file:
+        data = pa.deserialize(file.read())
+    return data
+
+
+def serialise(obj):
+    try:
+        return BytesIO(pa.serialize(obj).to_buffer())
+    except pa.lib.SerializationCallbackError:
+        return BytesIO(pickle.dumps(obj))
+
+
+def deserialise(serialised_obj):
+    data = serialised_obj.read()
+    try:
+        return pa.deserialize(data)
+    except pa.lib.ArrowInvalid:
+        return pickle.loads(data)
 
 
 def read_object_with_retry(storage, bucket, key, stream_reader=None):
     last_exception = None
     for attempt in range(1, 4):
         try:
-            print(f'Reading {key} (attempt {attempt})')
+            logger.debug(f'Reading {key} (attempt {attempt})')
             data_stream = storage.get_object(Bucket=bucket, Key=key)['Body']
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
                 data = data_stream.read()
             length = getattr(data_stream, '_amount_read', 'Unknown')
-            print(f'Reading {key} (attempt {attempt}) - Success ({length} bytes)')
+            logger.debug(f'Reading {key} (attempt {attempt}) - Success ({length} bytes)')
             return data
         except Exception as ex:
-            print(f'Exception reading {key} (attempt {attempt}): ', ex)
+            logger.debug(f'Exception reading {key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
 
@@ -146,17 +180,17 @@ def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
     last_exception = None
     for attempt in range(1, 4):
         try:
-            print(f'Reading {cobject.key} (attempt {attempt})')
+            logger.debug(f'Reading {cobject.key} (attempt {attempt})')
             data_stream = storage.get_cobject(cobject, stream=True)
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
                 data = data_stream.read()
             length = getattr(data_stream, '_amount_read', 'Unknown')
-            print(f'Reading {cobject.key} (attempt {attempt}) - Success ({length} bytes)')
+            logger.debug(f'Reading {cobject.key} (attempt {attempt}) - Success ({length} bytes)')
             return data
         except Exception as ex:
-            print(f'Exception reading {cobject.key} (attempt {attempt}): ', ex)
+            logger.debug(f'Exception reading {cobject.key} (attempt {attempt}): ', ex)
             last_exception = ex
     raise last_exception
 

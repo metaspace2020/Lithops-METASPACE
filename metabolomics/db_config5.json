@@ -1,16 +1,16 @@
 {
-  "name": "ds_config5",
+  "name": "db_config5",
   "databases": [
-    "metabolomics/db/mol_db1.pickle",
-    "metabolomics/db/mol_db2.pickle",
-    "metabolomics/db/mol_db3.pickle",
-    "metabolomics/db/mol_db4.pickle",
-    "metabolomics/db/mol_db7.pickle",
-    "metabolomics/db/mol_db8.pickle",
-    "metabolomics/db/mol_db9.pickle",
-    "metabolomics/db/mol_db10.pickle",
-    "metabolomics/db/mol_db11.pickle",
-    "metabolomics/db/mol_db12.pickle"
+    "metabolomics/db/mol_db1.csv",
+    "metabolomics/db/mol_db2.csv",
+    "metabolomics/db/mol_db3.csv",
+    "metabolomics/db/mol_db4.csv",
+    "metabolomics/db/mol_db7.csv",
+    "metabolomics/db/mol_db8.csv",
+    "metabolomics/db/mol_db9.csv",
+    "metabolomics/db/mol_db10.csv",
+    "metabolomics/db/mol_db11.csv",
+    "metabolomics/db/mol_db12.csv"
   ],
   "adducts": ["", "+H", "+Na", "+K"],
   "modifiers": [""]

@@ -1,13 +1,13 @@
 from itertools import product, repeat
-import pickle
+import os
 import numpy as np
 import pandas as pd
-import msgpack_numpy as msgpack
+from time import time
+from concurrent.futures.thread import ThreadPoolExecutor
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.molecular_db import DECOY_ADDUCTS
-from annotation_pipeline.utils import append_pywren_stats, read_object_with_retry, read_cloud_object_with_retry, \
-    list_keys
+from annotation_pipeline.utils import logger, PipelineStats, serialise, deserialise, read_cloud_object_with_retry
 
 
 def _get_random_adduct_set(size, adducts, offset):
@@ -16,11 +16,8 @@ def _get_random_adduct_set(size, adducts, offset):
     return np.array(adducts)[idxs]
 
 
-def msgpack_load_text(stream):
-    return msgpack.load(stream, encoding='utf-8')
-
-
-def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects, formula_scores_df):
+def build_fdr_rankings(pw, config_ds, config_db, mol_dbs_cobjects, formula_to_id_cobjects, formula_scores_df):
+    mol_db_path_to_cobj = dict(zip(config_db['databases'], mol_dbs_cobjects))
 
     def build_ranking(group_i, ranking_i, database, modifier, adduct, id, storage):
         print("Building ranking...")
@@ -31,7 +28,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects,
         print(f'adduct: {adduct}')
         # For every unmodified formula in `database`, look up the MSM score for the molecule
         # that it would become after the modifier and adduct are applied
-        mols = pickle.loads(read_object_with_retry(storage, bucket, database))
+        mols = read_cloud_object_with_retry(storage, mol_db_path_to_cobj[database], deserialise)
         if adduct is not None:
             # Target rankings use the same adduct for all molecules
             mol_formulas = list(map(safe_generate_ion_formula, mols, repeat(modifier), repeat(adduct)))
@@ -43,7 +40,7 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects,
 
         formula_to_id = {}
         for cobject in formula_to_id_cobjects:
-            formula_to_id_chunk = read_cloud_object_with_retry(storage, cobject, msgpack_load_text)
+            formula_to_id_chunk = read_cloud_object_with_retry(storage, cobject, deserialise)
 
             for formula in mol_formulas:
                 if formula_to_id_chunk.get(formula) is not None:
@@ -59,25 +56,25 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects,
             ranking_df = pd.DataFrame({'msm': msm})
             ranking_df = ranking_df[~ranking_df.msm.isna()]
 
-        return id, storage.put_cobject(pickle.dumps(ranking_df))
+        return id, storage.put_cobject(serialise(ranking_df))
 
-    decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(input_db['adducts']))
-    n_decoy_rankings = input_data.get('num_decoys', len(decoy_adducts))
+    decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(config_db['adducts']))
+    n_decoy_rankings = config_ds.get('num_decoys', len(decoy_adducts))
     msm_lookup = formula_scores_df.msm.to_dict() # Ideally this data would stay in COS so it doesn't have to be reuploaded
 
     # Create a job for each list of molecules to be ranked
     ranking_jobs = []
-    for group_i, (database, modifier) in enumerate(product(input_db['databases'], input_db['modifiers'])):
+    for group_i, (database, modifier) in enumerate(product(config_db['databases'], config_db['modifiers'])):
         # Target and decoy rankings are treated differently. Decoy rankings are identified by not having an adduct.
         ranking_jobs.extend((group_i, ranking_i, database, modifier, adduct)
-                             for ranking_i, adduct in enumerate(input_db['adducts']))
+                             for ranking_i, adduct in enumerate(config_db['adducts']))
         ranking_jobs.extend((group_i, ranking_i, database, modifier, None)
                              for ranking_i in range(n_decoy_rankings))
 
     memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_cobjects = [cobject for job_i, cobject in sorted(pw.get_result(futures))]
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
+    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), cobject=ranking_cobjects)
@@ -88,8 +85,8 @@ def build_fdr_rankings(pw, bucket, input_data, input_db, formula_to_id_cobjects,
 def calculate_fdrs(pw, rankings_df):
 
     def run_ranking(target_cobject, decoy_cobject, storage):
-        target = pickle.loads(read_cloud_object_with_retry(storage, target_cobject))
-        decoy = pickle.loads(read_cloud_object_with_retry(storage, decoy_cobject))
+        target = read_cloud_object_with_retry(storage, target_cobject, deserialise)
+        decoy = read_cloud_object_with_retry(storage, decoy_cobject, deserialise)
         merged = pd.concat([target.assign(is_target=1), decoy.assign(is_target=0)], sort=False)
         merged = merged.sort_values('msm', ascending=False)
         decoy_cumsum = (merged.is_target == False).cumsum()
@@ -128,16 +125,18 @@ def calculate_fdrs(pw, rankings_df):
     memory_capacity_mb = 256
     futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
+    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb)
 
     return pd.concat(results)
 
 
-def calculate_fdrs_vm(pw, formula_scores_df, db_data_cobjects):
+def calculate_fdrs_vm(storage, formula_scores_df, db_data_cobjects):
+    t = time()
+
     msms_df = formula_scores_df[['msm']]
 
-    def run_fdr(db_data_cobject, storage):
-        db, fdr, formula_map_df = pickle.loads(storage.get_cobject(db_data_cobject))
+    def run_fdr(db_data_cobject):
+        db, fdr, formula_map_df = read_cloud_object_with_retry(storage, db_data_cobject, deserialise)
 
         formula_msm = formula_map_df.merge(msms_df, how='inner', left_on='formula_i', right_index=True)
         modifiers = fdr.target_modifiers_df[['neutral_loss','adduct']].rename(columns={'neutral_loss': 'modifier'})
@@ -151,11 +150,10 @@ def calculate_fdrs_vm(pw, formula_scores_df, db_data_cobjects):
         )
         return results_df
 
+    logger.info('Estimating FDRs...')
+    with ThreadPoolExecutor(os.cpu_count()) as pool:
+        results_dfs = list(pool.map(run_fdr, db_data_cobjects))
 
-    memory_capacity_mb = 256
-    futures = pw.map(run_fdr, db_data_cobjects, runtime_memory=memory_capacity_mb)
-    results_dfs = pw.get_result(futures)
-    append_pywren_stats(futures, memory_mb=memory_capacity_mb)
-
-    return pd.concat(results_dfs)
+    exec_time = time() - t
+    return pd.concat(results_dfs), exec_time
 

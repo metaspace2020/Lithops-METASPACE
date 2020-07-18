@@ -1,12 +1,11 @@
 from functools import partial
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 import pandas as pd
-import pickle
-import math
+from time import time
 
 from annotation_pipeline.formula_parser import safe_generate_ion_formula
 from annotation_pipeline.metaspace_fdr import FDR
-from annotation_pipeline.utils import logger, read_object_with_retry
+from annotation_pipeline.utils import logger, serialise, deserialise, read_cloud_object_with_retry
 
 
 DECOY_ADDUCTS = ['+He', '+Li', '+Be', '+B', '+C', '+N', '+O', '+F', '+Ne', '+Mg', '+Al', '+Si', '+P', '+S', '+Cl', '+Ar', '+Ca', '+Sc', '+Ti', '+V', '+Cr', '+Mn', '+Fe', '+Co', '+Ni', '+Cu', '+Zn', '+Ga', '+Ge', '+As', '+Se', '+Br', '+Kr', '+Rb', '+Sr', '+Y', '+Zr', '+Nb', '+Mo', '+Ru', '+Rh', '+Pd', '+Ag', '+Cd', '+In', '+Sn', '+Sb', '+Te', '+I', '+Xe', '+Cs', '+Ba', '+La', '+Ce', '+Pr', '+Nd', '+Sm', '+Eu', '+Gd', '+Tb', '+Dy', '+Ho', '+Ir', '+Th', '+Pt', '+Os', '+Yb', '+Lu', '+Bi', '+Pb', '+Re', '+Tl', '+Tm', '+U', '+W', '+Au', '+Er', '+Hf', '+Hg', '+Ta']
@@ -14,15 +13,20 @@ N_FORMULAS_SEGMENTS = 256
 FORMULA_TO_ID_CHUNK_MB = 512
 
 
-def build_database_local(storage, db_bucket, db_config, ds_config):
-    db_data_cobjects, formulas_df = get_formulas_df(storage, db_bucket, db_config, ds_config)
+def build_database_local(storage, db_config, ds_config, mols_dbs_cobjects):
+    t = time()
+
+    logger.info('Generating formulas...')
+    db_data_cobjects, formulas_df = get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects)
     num_formulas = len(formulas_df)
     logger.info(f'Generated {num_formulas} formulas')
 
+    logger.info('Storing formulas...')
     formula_cobjects = store_formula_segments(storage, formulas_df)
     logger.info(f'Stored {num_formulas} formulas in {len(formula_cobjects)} chunks')
 
-    return formula_cobjects, db_data_cobjects
+    exec_time = time() - t
+    return formula_cobjects, db_data_cobjects, exec_time
 
 
 def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
@@ -35,20 +39,24 @@ def _get_db_fdr_and_formulas(ds_config, modifiers, adducts, mols):
         for formula, modifier in fdr.ion_tuples()
     ]
     formula_map_df = pd.DataFrame(formulas, columns=['formula', 'modifier', 'ion_formula'])
+
+    # TODO: check why there are NaN values in 'formula_map_df.ion_formula' on an execution of ds2-db3
+    formula_map_df = formula_map_df[~formula_map_df.ion_formula.isna()]
+
     return fdr, formula_map_df
 
 
-def get_formulas_df(storage, db_bucket, input_db, ds_config):
-    adducts = input_db['adducts']
-    modifiers = input_db['modifiers']
-    databases = input_db['databases']
+def get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects):
+    adducts = db_config['adducts']
+    modifiers = db_config['modifiers']
+    databases = db_config['databases']
 
     # Load databases
-    def _get_mols(mols_key):
-        return pickle.loads(read_object_with_retry(storage, db_bucket, mols_key))
+    def _get_mols(mols_cobj):
+        return read_cloud_object_with_retry(storage, mols_cobj, deserialise)
 
     with ThreadPoolExecutor(max_workers=128) as pool:
-        dbs = list(pool.map(_get_mols, databases))
+        dbs = list(pool.map(_get_mols, mols_dbs_cobjects))
 
     # Calculate formulas
     db_datas = []
@@ -69,7 +77,7 @@ def get_formulas_df(storage, db_bucket, input_db, ds_config):
         del formula_map_df['ion_formula']
 
     def _store_db_data(db_data):
-        return storage.put_cobject(pickle.dumps(db_data))
+        return storage.put_cobject(serialise(db_data))
 
     with ThreadPoolExecutor() as pool:
         db_data_cobjects = list(pool.map(_store_db_data, db_datas))
@@ -83,7 +91,7 @@ def store_formula_segments(storage, formulas_df):
     segm_list = [formulas_df.ion_formula.iloc[start:end] for start, end in segm_ranges]
 
     def _store(segm):
-        return storage.put_cobject(segm.to_msgpack())
+        return storage.put_cobject(serialise(segm))
 
     with ThreadPoolExecutor(max_workers=128) as pool:
         formula_cobjects = list(pool.map(_store, segm_list))

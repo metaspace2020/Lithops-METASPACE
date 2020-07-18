@@ -5,9 +5,9 @@ with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
 # Instructions for use
 
 ### Prerequisites:
-* **Python 3.6.x**
+* **Python 3.7.x**
 
-    Python must be one of the 3.6 versions (i.e. not 3.7 or above, not 3.5 or below) to work with the pre-built runtime. 
+    Python must be one of the 3.7 versions (i.e. not 3.8 or above, not 3.6 or below) to work with the pre-built runtime. 
 
 * **IBM Cloud account**
 

@@ -9,13 +9,7 @@ import numpy as np
 from time import time
 import pandas as pd
 
-from annotation_pipeline.utils import logger
-from pywren_ibm_cloud.storage import InternalStorage
-from pywren_ibm_cloud.config import default_config, extract_storage_config
-
-PYWREN_CONFIG = default_config()
-STORAGE_CONFIG = extract_storage_config(PYWREN_CONFIG)
-STORAGE = InternalStorage(STORAGE_CONFIG).storage_handler
+from annotation_pipeline.utils import logger, serialise_to_file, deserialise_from_file, serialise
 
 
 def download_dataset(imzml_url, ibd_url, local_path, storage):
@@ -39,10 +33,9 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
 
     imzml_size = imzml_path.stat().st_size / (1024 ** 2)
     ibd_size = ibd_path.stat().st_size / (1024 ** 2)
-    logger.debug(f' * imzML size: {imzml_size:.2f} mb')
-    logger.debug(f' * ibd size: {ibd_size:.2f} mb')
+    logger.debug(f'imzML size: {imzml_size:.2f} mb')
+    logger.debug(f'ibd size: {ibd_size:.2f} mb')
     return imzml_path, ibd_path
-
 
 
 def plan_dataset_chunks(imzml_reader, max_size=512 * 1024 ** 2):
@@ -117,6 +110,7 @@ def define_ds_segments(imzml_parser, ds_segm_size_mb=5, sample_sp_n=1000):
     ds_segments_bounds[0, 0] = 0
     ds_segments_bounds[-1, 1] = max_mz_value
 
+    logger.debug(f'Defined {len(ds_segments_bounds)} segments')
     return ds_segments_bounds
 
 
@@ -125,7 +119,7 @@ def segment_spectra_chunk(chunk_i, sp_mz_int_buf, ds_segments_bounds, ds_segment
         segm_i, (l, r) = args
         segm_start, segm_end = np.searchsorted(sp_mz_int_buf.mz.values, (l, r))
         segm = sp_mz_int_buf.iloc[segm_start:segm_end]
-        segm.to_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
+        serialise_to_file(segm, ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}')
         return segm_i, len(segm)
 
     with ThreadPoolExecutor(4) as pool:
@@ -142,13 +136,13 @@ def parse_and_segment_chunk(args):
 def upload_segments(storage, ds_segments_path, chunks_n, segments_n):
     def _upload(segm_i):
         segm = pd.concat([
-            pd.read_msgpack(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}.msgpack')
+            deserialise_from_file(ds_segments_path / f'ds_segm_{segm_i:04}_{chunk_i:04}')
             for chunk_i in range(chunks_n)
         ], ignore_index=True, sort=False)
         segm.sort_values('mz', inplace=True)
         segm.reset_index(drop=True, inplace=True)
-        segm = segm.to_msgpack()
-        logger.debug(f'Uploading segment {segm_i}: {len(segm)} bytes')
+        segm = serialise(segm)
+        logger.debug(f'Uploading segment {segm_i}: {segm.getbuffer().nbytes} bytes')
         return storage.put_cobject(segm)
 
     with ThreadPoolExecutor(os.cpu_count()) as pool:
@@ -192,7 +186,7 @@ def make_segments(imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort
 
 
 def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32):
-    start = time()
+    stats = []
 
     with TemporaryDirectory() as tmp_dir:
         imzml_dir = Path(tmp_dir) / 'imzml'
@@ -202,36 +196,30 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32)
 
         logger.info('Downloading dataset...')
         t = time()
-        imzml_path, ibd_path = download_dataset(
-            ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage
-        )
-        logger.info('Downloaded dataset in {:.2f} sec'.format(time() - t))
+        imzml_path, ibd_path = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage)
+        stats.append(('download_dataset', time() - t))
 
-        logger.debug('Loading parser...')
+        logger.info('Loading parser...')
         t = time()
         imzml_parser = ImzMLParser(str(imzml_path))
         imzml_reader = imzml_parser.portable_spectrum_reader()
-        logger.info('Loaded parser in {:.2f} sec'.format(time() - t))
+        stats.append(('load_parser', time() - t))
 
-        logger.debug('Defining segments bounds...')
+        logger.info('Defining segments bounds...')
         t = time()
         ds_segments_bounds = define_ds_segments(imzml_parser, ds_segm_size_mb=ds_segm_size_mb)
         segments_n = len(ds_segments_bounds)
-        logger.info(f'Defined {segments_n} segments in {time() - t:.2f} sec')
+        stats.append(('define_segments', time() - t))
 
-        logger.debug('Segmenting...')
+        logger.info('Segmenting...')
         t = time()
-        chunks_n, ds_segms_len = make_segments(
-            imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort_memory
-        )
-        logger.info('Segmented dataset in {:.2f} sec'.format(time() - t))
+        chunks_n, ds_segms_len = make_segments(imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort_memory)
+        stats.append(('dataset_segmentation', time() - t))
 
-        logger.debug('Uploading segments...')
+        logger.info('Uploading segments...')
         t = time()
         ds_segms_cobjects = upload_segments(storage, segments_dir, chunks_n, segments_n)
-        logger.info('Uploaded segments in {:.2f} sec'.format(time() - t))
+        stats.append(('upload_segments', time() - t))
 
-        logger.info('load_and_split_ds_vm total: {:.2f} sec'.format(time() - start))
-
-        return imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len
+        return imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len, stats
 
