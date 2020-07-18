@@ -46,7 +46,7 @@ class PipelineCacher:
                 unique_prefixes.append(self.prefixes[':db'])
             if dataset:
                 unique_prefixes.append(self.prefixes[':ds'])
-            if not database or not dataset:
+            if database or dataset:
                 unique_prefixes.append(self.prefixes[':ds/:db'])
         else:
             unique_prefixes.append(self.prefixes[''])

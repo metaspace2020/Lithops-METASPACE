@@ -120,10 +120,7 @@ class Pipeline(object):
             validate_formula_cobjects(self.storage, self.formula_cobjects)
 
     def calculate_centroids(self, use_cache=True, debug_validate=False):
-        if self.vm_algorithm:
-            cache_key = ':ds/:db/calculate_centroids.cache'
-        else:
-            cache_key = ':db/calculate_centroids.cache'
+        cache_key = ':ds/:db/calculate_centroids.cache'
 
         if use_cache and self.cacher.exists(cache_key):
             self.peaks_cobjects = self.cacher.load(cache_key)
@@ -251,7 +248,7 @@ class Pipeline(object):
             logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
             logger.info('Annotating...')
-            memory_capacity_mb = 4096 if self.is_intensive_dataset else 2048
+            memory_capacity_mb = 2048 if self.is_intensive_dataset else 1024
             process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                            self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                            self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
