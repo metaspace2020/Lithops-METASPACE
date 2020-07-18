@@ -204,7 +204,10 @@ def create_process_segment(ds_segms_cobjects, ds_segments_bounds, ds_segms_len,
             sp_inds=sp_arr.sp_i.values, sp_mzs=sp_arr.mz.values, sp_ints=sp_arr.int.values,
             centr_df=centr_df, nrows=nrows, ncols=ncols, ppm=ppm, min_px=1
         )
-        safe_mb = pw_mem_mb // 2
+        if vm_algorithm:
+            safe_mb = pw_mem_mb // 2
+        else:
+            safe_mb = 1024
         max_formula_images_mb = (pw_mem_mb - safe_mb - (last_ds_segm_i - first_ds_segm_i + 1) * ds_segm_size_mb) // 3
         print(f'Max formula_images size: {max_formula_images_mb} mb')
         images_manager = ImagesManager(storage, max_formula_images_mb * 1024 ** 2)

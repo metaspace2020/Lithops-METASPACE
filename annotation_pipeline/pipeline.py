@@ -248,7 +248,10 @@ class Pipeline(object):
             logger.info(f'Loaded {self.formula_metrics_df.shape[0]} metrics from cache')
         else:
             logger.info('Annotating...')
-            memory_capacity_mb = 2048 if self.is_intensive_dataset else 1024
+            if self.vm_algorithm:
+                memory_capacity_mb = 2048 if self.is_intensive_dataset else 1024
+            else:
+                memory_capacity_mb = 4096 if self.is_intensive_dataset else 2048
             process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                            self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                            self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
