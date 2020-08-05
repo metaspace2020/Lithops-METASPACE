@@ -255,13 +255,12 @@ class Pipeline(object):
             process_centr_segment = create_process_segment(self.ds_segms_cobjects,
                                                            self.ds_segments_bounds, self.ds_segms_len, self.imzml_reader,
                                                            self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
-                                                           self.vm_algorithm)
+                                                           self.vm_algorithm, self.storage)
 
-            futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
-            formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
+            results = list(map(process_centr_segment, self.db_segms_cobjects, range(self.centr_segm_n)))
+            formula_metrics_list, images_cloud_objs = zip(*results)
             self.formula_metrics_df = pd.concat(formula_metrics_list)
             self.images_cloud_objs = list(chain(*images_cloud_objs))
-            PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
             logger.info(f'Metrics calculated: {self.formula_metrics_df.shape[0]}')
             self.cacher.save((self.formula_metrics_df, self.images_cloud_objs), cache_key)
 
