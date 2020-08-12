@@ -1,7 +1,7 @@
 {
   "name": "AZ_Rat_brains",
-  "imzml_path": "cos://metaspace-de-public/metabolomics/ds/ds2/Image5.imzML",
-  "ibd_path": "cos://metaspace-de-public/metabolomics/ds/ds2/Image5.ibd",
+  "imzml_path": "cos://embl-datasets/big/ds.imzML",
+  "ibd_path": "cos://embl-datasets/big/ds.ibd",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

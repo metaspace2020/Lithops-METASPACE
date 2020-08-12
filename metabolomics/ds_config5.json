@@ -1,7 +1,7 @@
 {
   "name": "X089-Mousebrain",
-  "imzml_path": "cos://metaspace-de-public/metabolomics/ds/ds5/X089-Mousebrain_842x603_12um_A25__DB.imzml",
-  "ibd_path": "cos://metaspace-de-public/metabolomics/ds/ds5/X089-Mousebrain_842x603_12um_A25__DB.IBD",
+  "imzml_path": "cos://embl-datasets/huge3/ds.imzML",
+  "ibd_path": "cos://embl-datasets/huge3/ds.ibd",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

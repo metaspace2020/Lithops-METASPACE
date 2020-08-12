@@ -26,10 +26,15 @@ class Pipeline(object):
         self.use_ds_cache = use_ds_cache
         self.vm_algorithm = vm_algorithm
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
+        self.config['pywren']['compute_backend'] = 'docker'
+        self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend = 'ibm_cos')
+        self.config['pywren']['compute_backend'] = 'ibm_cf'
 
+        self.config['backend'] = 'ibm_cos'
+        self.config['bucket'] = self.config['pywren']['storage_bucket']
         storage_handler = Storage(self.config, self.config['pywren']['storage_backend'])
-        storage_handler.bucket = self.config['pywren']['storage_bucket']
-        self.storage = storage_handler.get_client()
+
+        self.storage = storage_handler
 
         cache_namespace = 'vm' if vm_algorithm else 'function'
         self.cacher = PipelineCacher(
@@ -94,9 +99,15 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
+                '''
                 self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = build_database_local(
                     self.storage, self.db_config, self.ds_config, self.mols_dbs_cobjects
                 )
+                '''
+                #pywren call
+                self.pywren_vm_executor.map(build_database_local,
+                    (self.db_config, self.ds_config, self.mols_dbs_cobjects))
+                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.pywren_vm_executor.get_result()[0]
                 PipelineStats.append_vm('build_database', build_db_exec_time,
                                         cloud_objects_n=len(self.formula_cobjects))
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
