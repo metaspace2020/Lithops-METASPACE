@@ -28,8 +28,8 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     imzml_path = local_path / 'ds.imzML'
     ibd_path = local_path / 'ds.ibd'
 
-    #with ThreadPoolExecutor() as ex:
-    #    ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
+    # with ThreadPoolExecutor() as ex:
+    #     ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
     logger.info("Download dataset {} - {} ".format(imzml_url, imzml_path))
     _download(imzml_url, imzml_path)
     logger.info("Download dataset {} - {} ".format(ibd_url, ibd_path))
@@ -189,7 +189,7 @@ def make_segments(imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort
     return chunks_n, ds_segms_len
 
 
-def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32):
+def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory):
     stats = []
 
     with TemporaryDirectory() as tmp_dir:

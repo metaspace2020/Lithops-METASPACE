@@ -25,16 +25,11 @@ class Pipeline(object):
         self.use_db_cache = use_db_cache
         self.use_ds_cache = use_ds_cache
         self.vm_algorithm = vm_algorithm
+
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
-        self.config['pywren']['compute_backend'] = 'docker'
-        self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend = 'ibm_cos')
-        self.config['pywren']['compute_backend'] = 'ibm_cf'
+        self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend=self.config['pywren']['storage_backend'])
 
-        self.config['backend'] = 'ibm_cos'
-        self.config['bucket'] = self.config['pywren']['storage_bucket']
-        storage_handler = Storage(self.config, self.config['pywren']['storage_backend'])
-
-        self.storage = storage_handler
+        self.storage = Storage(pywren_config=self.config, storage_backend=self.config['pywren']['storage_backend'])
 
         cache_namespace = 'vm' if vm_algorithm else 'function'
         self.cacher = PipelineCacher(
@@ -99,9 +94,9 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
-                self.pywren_vm_executor.map(build_database_local,
-                    (self.db_config, self.ds_config, self.mols_dbs_cobjects))
-                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.pywren_vm_executor.get_result()[0]
+                self.pywren_vm_executor.call_async(build_database_local,
+                                                   (self.db_config, self.ds_config, self.mols_dbs_cobjects))
+                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.pywren_vm_executor.get_result()
                 PipelineStats.append_vm('build_database', build_db_exec_time,
                                         cloud_objects_n=len(self.formula_cobjects))
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
@@ -177,10 +172,10 @@ class Pipeline(object):
                 result = self.cacher.load(cache_key)
                 logger.info(f'Loaded {len(result[2])} dataset segments from cache')
             else:
-                sort_memory=2**32
-                self.pywren_vm_executor.map(load_and_split_ds_vm,
-                    (self.ds_config, self.ds_segm_size_mb, sort_memory))
-                result = self.pywren_vm_executor.get_result()[0]
+                sort_memory = 2**32
+                self.pywren_vm_executor.call_async(load_and_split_ds_vm,
+                                                   (self.ds_config, self.ds_segm_size_mb, sort_memory))
+                result = self.pywren_vm_executor.get_result()
 
                 logger.info(f'Segmented dataset chunks into {len(result[2])} segments')
                 self.cacher.save(result, cache_key)
@@ -282,10 +277,9 @@ class Pipeline(object):
             logger.info('Loaded fdrs from cache')
         else:
             if self.vm_algorithm:
-                self.pywren_vm_executor.map(calculate_fdrs_vm,
-                    (self.formula_metrics_df,
-                    self.db_data_cobjects))
-                self.fdrs, fdr_exec_time = self.pywren_vm_executor.get_result()[0]
+                self.pywren_vm_executor.call_async(calculate_fdrs_vm,
+                                                   (self.formula_metrics_df, self.db_data_cobjects))
+                self.fdrs, fdr_exec_time = self.pywren_vm_executor.get_result()
 
                 PipelineStats.append_vm('calculate_fdrs', fdr_exec_time)
             else:
