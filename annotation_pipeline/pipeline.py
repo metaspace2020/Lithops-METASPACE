@@ -282,11 +282,11 @@ class Pipeline(object):
             logger.info('Loaded fdrs from cache')
         else:
             if self.vm_algorithm:
-                self.fdrs, fdr_exec_time = calculate_fdrs_vm(
-                    self.storage,
-                    self.formula_metrics_df,
-                    self.db_data_cobjects
-                )
+                self.pywren_vm_executor.map(calculate_fdrs_vm,
+                    (self.formula_metrics_df,
+                    self.db_data_cobjects))
+                self.fdrs, fdr_exec_time = self.pywren_vm_executor.get_result()[0]
+
                 PipelineStats.append_vm('calculate_fdrs', fdr_exec_time)
             else:
                 rankings_df = build_fdr_rankings(
