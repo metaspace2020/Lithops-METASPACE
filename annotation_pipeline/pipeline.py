@@ -99,12 +99,6 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
-                '''
-                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = build_database_local(
-                    self.storage, self.db_config, self.ds_config, self.mols_dbs_cobjects
-                )
-                '''
-                #pywren call
                 self.pywren_vm_executor.map(build_database_local,
                     (self.db_config, self.ds_config, self.mols_dbs_cobjects))
                 self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.pywren_vm_executor.get_result()[0]
@@ -183,7 +177,11 @@ class Pipeline(object):
                 result = self.cacher.load(cache_key)
                 logger.info(f'Loaded {len(result[2])} dataset segments from cache')
             else:
-                result = load_and_split_ds_vm(self.storage, self.ds_config, self.ds_segm_size_mb)
+                sort_memory=2**32
+                self.pywren_vm_executor.map(load_and_split_ds_vm,
+                    (self.ds_config, self.ds_segm_size_mb, sort_memory))
+                result = self.pywren_vm_executor.get_result()[0]
+
                 logger.info(f'Segmented dataset chunks into {len(result[2])} segments')
                 self.cacher.save(result, cache_key)
             self.imzml_reader, \
