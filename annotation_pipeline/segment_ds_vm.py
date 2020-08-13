@@ -16,7 +16,7 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     def _download(url, path):
         if url.startswith('cos://'):
             bucket, key = url[len('cos://'):].split('/', maxsplit=1)
-            storage.download_file(bucket, key, str(path))
+            storage.get_client().download_file(bucket, key, str(path))
         else:
             with requests.get(url, stream=True) as r:
                 r.raise_for_status()
@@ -28,8 +28,12 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     imzml_path = local_path / 'ds.imzML'
     ibd_path = local_path / 'ds.ibd'
 
-    with ThreadPoolExecutor() as ex:
-        ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
+    #with ThreadPoolExecutor() as ex:
+    #    ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
+    logger.info("Download dataset {} - {} ".format(imzml_url, imzml_path))
+    _download(imzml_url, imzml_path)
+    logger.info("Download dataset {} - {} ".format(ibd_url, ibd_path))
+    _download(ibd_url, ibd_path)
 
     imzml_size = imzml_path.stat().st_size / (1024 ** 2)
     ibd_size = ibd_path.stat().st_size / (1024 ** 2)
@@ -189,10 +193,13 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory=2**32)
     stats = []
 
     with TemporaryDirectory() as tmp_dir:
+        logger.info("Temp dir is {}".format(tmp_dir))
         imzml_dir = Path(tmp_dir) / 'imzml'
-        imzml_dir.mkdir()
+        res = imzml_dir.mkdir()
+        logger.info("Create {} result {}".format(imzml_dir, res))
         segments_dir = Path(tmp_dir) / 'segments'
-        segments_dir.mkdir()
+        res = segments_dir.mkdir()
+        logger.info("Create {} result {}".format(segments_dir, res))
 
         logger.info('Downloading dataset...')
         t = time()
