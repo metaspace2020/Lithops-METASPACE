@@ -10,6 +10,11 @@
     "access_key": "****",
     "secret_key": "****"
   },
+  "docker": {
+    "host": "***",
+    "ssh_user": "***",
+    "ssh_password": "***"
+  },
   "pywren": {
     "storage_bucket": "****",
     "storage_backend": "ibm_cos",
