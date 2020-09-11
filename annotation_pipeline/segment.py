@@ -19,7 +19,7 @@ def get_imzml_reader(pw, imzml_path):
     def get_portable_imzml_reader(storage):
         if imzml_path.startswith('cos://'):
             bucket, key = imzml_path[len('cos://'):].split('/', maxsplit=1)
-            imzml_stream = storage.get_object(Bucket=bucket, Key=key)['Body']
+            imzml_stream = storage.get_object(bucket, key, stream=True)
         else:
             imzml_stream = requests.get(imzml_path, stream=True).raw
         parser = ImzMLParser(imzml_stream, ibd_file=None)
@@ -43,7 +43,7 @@ def get_spectra(storage, ibd_url, imzml_reader, sp_inds):
     int_ends = int_starts + np.array(imzml_reader.intensityLengths)[sp_inds] * np.dtype(imzml_reader.intensityPrecision).itemsize
     int_ranges = np.stack([int_starts, int_ends], axis=1)
     ranges_to_read = np.vstack([mz_ranges, int_ranges])
-    data_ranges = read_ranges_from_url(storage, ibd_url, ranges_to_read)
+    data_ranges = read_ranges_from_url(storage.get_client(), ibd_url, ranges_to_read)
     mz_data = data_ranges[:len(sp_inds)]
     int_data = data_ranges[len(sp_inds):]
     del data_ranges

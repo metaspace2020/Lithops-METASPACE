@@ -27,7 +27,8 @@ class Pipeline(object):
         self.vm_algorithm = vm_algorithm
 
         self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
-        self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend=self.config['pywren']['storage_backend'])
+        if self.vm_algorithm:
+            self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend=self.config['pywren']['storage_backend'])
 
         self.storage = Storage(pywren_config=self.config, storage_backend=self.config['pywren']['storage_backend'])
 
