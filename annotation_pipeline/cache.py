@@ -1,15 +1,15 @@
-from pywren_ibm_cloud.storage.utils import CloudObject
+from lithops.storage.utils import CloudObject
 
 from annotation_pipeline.utils import get_ibm_cos_client, list_keys, clean_from_cos, serialise, deserialise
 
 
 class PipelineCacher:
     def __init__(self, pw, namespace, ds_name, db_name):
-        self.pywren_executor = pw
-        self.config = self.pywren_executor.config
+        self.lithops_executor = pw
+        self.config = self.lithops_executor.config
 
         self.storage_handler = get_ibm_cos_client(self.config)
-        self.bucket = self.config['pywren']['storage_bucket']
+        self.bucket = self.config['lithops']['storage_bucket']
         self.prefixes = {
             '': f'metabolomics/cache/{namespace}',
             ':ds': f'metabolomics/cache/{namespace}/{ds_name}/',
@@ -57,7 +57,8 @@ class PipelineCacher:
 
         cobjects_to_clean = []
         for cache_key in keys:
-            data_stream = self.storage_handler.get_object(Bucket=self.bucket, Key=cache_key)['Body']
+            res = self.storage_handler.get_object(Bucket=self.bucket, Key=cache_key)
+            data_stream = res['Body']
             cache_data = deserialise(data_stream)
 
             if isinstance(cache_data, tuple):
@@ -73,6 +74,6 @@ class PipelineCacher:
             elif isinstance(cache_data, CloudObject):
                 cobjects_to_clean.append(cache_data)
 
-        self.pywren_executor.clean(cs=cobjects_to_clean)
+        self.lithops_executor.clean(cs=cobjects_to_clean)
         for prefix in unique_prefixes:
             clean_from_cos(self.config, self.bucket, prefix, self.storage_handler)

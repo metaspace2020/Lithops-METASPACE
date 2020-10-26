@@ -44,7 +44,7 @@ class PipelineStats:
 
         actions_num = len(futures)
         func_name = futures[0].function_name
-        runtimes = [future.stats['exec_time'] for future in futures]
+        runtimes = [future.stats['worker_exec_time'] for future in futures]
         cost = calc_cost(runtimes, memory_mb / 1024)
         cls._append([[func_name, actions_num, memory_mb, np.average(runtimes), cost, cloud_objects_n]])
 

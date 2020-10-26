@@ -1,5 +1,5 @@
 from itertools import chain
-import pywren_ibm_cloud as pywren
+import lithops
 import pandas as pd
 
 from annotation_pipeline.check_results import get_reference_results, check_results, log_bad_results
@@ -13,28 +13,30 @@ from annotation_pipeline.segment import define_ds_segments, chunk_spectra, segme
 from annotation_pipeline.cache import PipelineCacher
 from annotation_pipeline.segment_ds_vm import load_and_split_ds_vm
 from annotation_pipeline.utils import PipelineStats, logger, deserialise, read_cloud_object_with_retry
-from pywren_ibm_cloud.storage import Storage
+from lithops.storage import Storage
+from lithops.config import default_config
 
 
 class Pipeline(object):
 
-    def __init__(self, config, ds_config, db_config, use_db_cache=True, use_ds_cache=True, vm_algorithm=True):
-        self.config = config
+    def __init__(self, ds_config, db_config, use_db_cache=True, use_ds_cache=True, vm_algorithm=True):
+
+        self.config = default_config()
         self.ds_config = ds_config
         self.db_config = db_config
         self.use_db_cache = use_db_cache
         self.use_ds_cache = use_ds_cache
         self.vm_algorithm = vm_algorithm
 
-        self.pywren_executor = pywren.function_executor(config=self.config, runtime_memory=2048)
+        self.lithops_executor = lithops.function_executor(config=self.config, runtime_memory=2048)
         if self.vm_algorithm:
-            self.pywren_vm_executor = pywren.docker_executor(config=self.config, storage_backend=self.config['pywren']['storage_backend'])
+            self.lithops_vm_executor = lithops.function_executor(config=self.config, type='standalone', storage=self.config['lithops']['storage'])
 
-        self.storage = Storage(pywren_config=self.config, storage_backend=self.config['pywren']['storage_backend'])
+        self.storage = Storage(lithops_config=self.config, storage_backend='ibm_cos')
 
         cache_namespace = 'vm' if vm_algorithm else 'function'
         self.cacher = PipelineCacher(
-            self.pywren_executor, cache_namespace, self.ds_config["name"], self.db_config["name"]
+            self.lithops_executor, cache_namespace, self.ds_config["name"], self.db_config["name"]
         )
         if not self.use_db_cache or not self.use_ds_cache:
             self.cacher.clean(database=not self.use_db_cache, dataset=not self.use_ds_cache)
@@ -95,9 +97,9 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.db_data_cobjects)} db_data objects from cache')
             else:
-                self.pywren_vm_executor.call_async(build_database_local,
+                self.lithops_vm_executor.call_async(build_database_local,
                                                    (self.db_config, self.ds_config, self.mols_dbs_cobjects))
-                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.pywren_vm_executor.get_result()
+                self.formula_cobjects, self.db_data_cobjects, build_db_exec_time = self.lithops_vm_executor.get_result()
                 PipelineStats.append_vm('build_database', build_db_exec_time,
                                         cloud_objects_n=len(self.formula_cobjects))
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
@@ -111,7 +113,7 @@ class Pipeline(object):
                             f' {len(self.formula_to_id_cobjects)} formula-to-id chunks from cache')
             else:
                 self.formula_cobjects, self.formula_to_id_cobjects = build_database(
-                    self.pywren_executor, self.db_config, self.mols_dbs_cobjects
+                    self.lithops_executor, self.db_config, self.mols_dbs_cobjects
                 )
                 logger.info(f'Built {len(self.formula_cobjects)} formula segments and'
                             f' {len(self.formula_to_id_cobjects)} formula-to-id chunks')
@@ -128,13 +130,13 @@ class Pipeline(object):
             logger.info(f'Loaded {len(self.peaks_cobjects)} centroid chunks from cache')
         else:
             self.peaks_cobjects = calculate_centroids(
-                self.pywren_executor, self.formula_cobjects, self.ds_config
+                self.lithops_executor, self.formula_cobjects, self.ds_config
             )
             logger.info(f'Calculated {len(self.peaks_cobjects)} centroid chunks')
             self.cacher.save(self.peaks_cobjects, cache_key)
 
         if debug_validate:
-            validate_peaks_cobjects(self.pywren_executor, self.peaks_cobjects)
+            validate_peaks_cobjects(self.lithops_executor, self.peaks_cobjects)
 
     def load_ds(self, use_cache=True):
         cache_key = ':ds/load_ds.cache'
@@ -146,7 +148,7 @@ class Pipeline(object):
                 self.imzml_reader, self.imzml_cobject = self.cacher.load(cache_key)
                 logger.info(f'Loaded imzml from cache, {len(self.imzml_reader.coordinates)} spectra found')
             else:
-                self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.pywren_executor, self.ds_config['imzml_path'])
+                self.imzml_reader, self.imzml_cobject = get_imzml_reader(self.lithops_executor, self.ds_config['imzml_path'])
                 logger.info(f'Parsed imzml: {len(self.imzml_reader.coordinates)} spectra found')
                 self.cacher.save((self.imzml_reader, self.imzml_cobject), cache_key)
 
@@ -160,7 +162,7 @@ class Pipeline(object):
                 self.ds_chunks_cobjects = self.cacher.load(cache_key)
                 logger.info(f'Loaded {len(self.ds_chunks_cobjects)} dataset chunks from cache')
             else:
-                self.ds_chunks_cobjects = chunk_spectra(self.pywren_executor, self.ds_config['ibd_path'],
+                self.ds_chunks_cobjects = chunk_spectra(self.lithops_executor, self.ds_config['ibd_path'],
                                                         self.imzml_cobject, self.imzml_reader)
                 logger.info(f'Uploaded {len(self.ds_chunks_cobjects)} dataset chunks')
                 self.cacher.save(self.ds_chunks_cobjects, cache_key)
@@ -174,9 +176,9 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(result[2])} dataset segments from cache')
             else:
                 sort_memory = 2**32
-                self.pywren_vm_executor.call_async(load_and_split_ds_vm,
+                self.lithops_vm_executor.call_async(load_and_split_ds_vm,
                                                    (self.ds_config, self.ds_segm_size_mb, sort_memory))
-                result = self.pywren_vm_executor.get_result()
+                result = self.lithops_vm_executor.get_result()
 
                 logger.info(f'Segmented dataset chunks into {len(result[2])} segments')
                 self.cacher.save(result, cache_key)
@@ -198,10 +200,10 @@ class Pipeline(object):
                 logger.info(f'Loaded {len(self.ds_segms_cobjects)} dataset segments from cache')
             else:
                 sample_sp_n = 1000
-                self.ds_segments_bounds = define_ds_segments(self.pywren_executor, self.ds_config["ibd_path"],
+                self.ds_segments_bounds = define_ds_segments(self.lithops_executor, self.ds_config["ibd_path"],
                                                              self.imzml_cobject, self.ds_segm_size_mb, sample_sp_n)
                 self.ds_segms_cobjects, self.ds_segms_len = \
-                    segment_spectra(self.pywren_executor, self.ds_chunks_cobjects, self.ds_segments_bounds,
+                    segment_spectra(self.lithops_executor, self.ds_chunks_cobjects, self.ds_segments_bounds,
                                     self.ds_segm_size_mb, self.imzml_reader.mzPrecision)
                 logger.info(f'Segmented dataset chunks into {len(self.ds_segms_cobjects)} segments')
                 self.cacher.save((self.ds_segments_bounds, self.ds_segms_cobjects, self.ds_segms_len), cache_key)
@@ -211,7 +213,7 @@ class Pipeline(object):
 
         if debug_validate:
             validate_ds_segments(
-                self.pywren_executor, self.imzml_reader, self.ds_segments_bounds,
+                self.lithops_executor, self.imzml_reader, self.ds_segments_bounds,
                 self.ds_segms_cobjects, self.ds_segms_len, self.vm_algorithm,
             )
 
@@ -224,12 +226,12 @@ class Pipeline(object):
             logger.info(f'Loaded {len(self.db_segms_cobjects)} centroids segments from cache')
         else:
             self.clip_centr_chunks_cobjects, centr_n = \
-                clip_centr_df(self.pywren_executor, self.peaks_cobjects, mz_min, mz_max)
-            centr_segm_lower_bounds = define_centr_segments(self.pywren_executor, self.clip_centr_chunks_cobjects,
+                clip_centr_df(self.lithops_executor, self.peaks_cobjects, mz_min, mz_max)
+            centr_segm_lower_bounds = define_centr_segments(self.lithops_executor, self.clip_centr_chunks_cobjects,
                                                             centr_n, self.ds_segm_n, self.ds_segm_size_mb)
 
             max_ds_segms_size_per_db_segm_mb = 2560 if self.is_intensive_dataset else 1536
-            self.db_segms_cobjects = segment_centroids(self.pywren_executor, self.clip_centr_chunks_cobjects,
+            self.db_segms_cobjects = segment_centroids(self.lithops_executor, self.clip_centr_chunks_cobjects,
                                                        centr_segm_lower_bounds, self.ds_segments_bounds,
                                                        self.ds_segm_size_mb, max_ds_segms_size_per_db_segm_mb,
                                                        self.image_gen_config['ppm'])
@@ -241,7 +243,7 @@ class Pipeline(object):
 
         if debug_validate:
             validate_centroid_segments(
-                self.pywren_executor, self.db_segms_cobjects, self.ds_segments_bounds,
+                self.lithops_executor, self.db_segms_cobjects, self.ds_segments_bounds,
                 self.image_gen_config['ppm']
             )
 
@@ -262,8 +264,8 @@ class Pipeline(object):
                                                            self.image_gen_config, memory_capacity_mb, self.ds_segm_size_mb,
                                                            self.vm_algorithm)
 
-            futures = self.pywren_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
-            formula_metrics_list, images_cloud_objs = zip(*self.pywren_executor.get_result(futures))
+            futures = self.lithops_executor.map(process_centr_segment, self.db_segms_cobjects, runtime_memory=memory_capacity_mb)
+            formula_metrics_list, images_cloud_objs = zip(*self.lithops_executor.get_result(futures))
             self.formula_metrics_df = pd.concat(formula_metrics_list)
             self.images_cloud_objs = list(chain(*images_cloud_objs))
             PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(self.images_cloud_objs))
@@ -278,17 +280,17 @@ class Pipeline(object):
             logger.info('Loaded fdrs from cache')
         else:
             if self.vm_algorithm:
-                self.pywren_vm_executor.call_async(calculate_fdrs_vm,
+                self.lithops_vm_executor.call_async(calculate_fdrs_vm,
                                                    (self.formula_metrics_df, self.db_data_cobjects))
-                self.fdrs, fdr_exec_time = self.pywren_vm_executor.get_result()
+                self.fdrs, fdr_exec_time = self.lithops_vm_executor.get_result()
 
                 PipelineStats.append_vm('calculate_fdrs', fdr_exec_time)
             else:
                 rankings_df = build_fdr_rankings(
-                    self.pywren_executor, self.ds_config, self.db_config, self.mols_dbs_cobjects,
+                    self.lithops_executor, self.ds_config, self.db_config, self.mols_dbs_cobjects,
                     self.formula_to_id_cobjects, self.formula_metrics_df
                 )
-                self.fdrs = calculate_fdrs(self.pywren_executor, rankings_df)
+                self.fdrs = calculate_fdrs(self.lithops_executor, rankings_df)
             self.cacher.save(self.fdrs, cache_key)
 
         logger.info('Number of annotations at with FDR less than:')
@@ -314,9 +316,9 @@ class Pipeline(object):
                     images[k] = v
             return images
 
-        futures = self.pywren_executor.map(get_target_images, self.images_cloud_objs, runtime_memory=1024)
+        futures = self.lithops_executor.map(get_target_images, self.images_cloud_objs, runtime_memory=1024)
         all_images = {}
-        for image_set in self.pywren_executor.get_result(futures):
+        for image_set in self.lithops_executor.get_result(futures):
             all_images.update(image_set)
 
         return all_images
