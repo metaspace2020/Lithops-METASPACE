@@ -1,13 +1,11 @@
 # METASPACE annotation pipeline on IBM Cloud
 Experimental code to integrate [METASPACE engine](https://github.com/metaspace2020/metaspace/tree/master/metaspace/engine)
-with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
+with [Lithops](https://github.com/lithops-cloud/lithops) for IBM Cloud.
 
 # Instructions for use
 
 ### Prerequisites:
-* **Python 3.7.x**
-
-    Python must be one of the 3.7 versions (i.e. not 3.8 or above, not 3.6 or below) to work with the pre-built runtime. 
+* Python 3.8.5
 
 * **IBM Cloud account**
 
@@ -27,7 +25,15 @@ with [PyWren](https://github.com/pywren/pywren-ibm-cloud) for IBM Cloud.
     pip install -e .
     ```
 
-2. Copy `config.json.template` to `config.json` and edit it, filling in your IBM Cloud details. It is fine to use the same bucket in all places. 
+2. Follow [lithops configuration](https://github.com/lithops-cloud/lithops/tree/master/config#lithops-configuration) to create Lithops configuration file.
+3. Copy
+
+		  storage:
+			ds_bucket: <bucket name>
+			db_bucket: <bucket name>
+			output_bucket: <bucket name>
+
+ to the end lithops config file.
 
 3. Run one of the below notebooks. 
 
