@@ -2,13 +2,13 @@
 #
 # Some concepts don't match directly:
 # In METASPACE a "modifier" is a concatenation of chem_mod, neutral_loss and adduct
-# In pywren-annotation-pipeline a modifier is just a neutral_loss. It does not include an adduct.
+# In Lithops-METASPACE a modifier is just a neutral_loss. It does not include an adduct.
 #
 # In METASPACE the "neutral_losses" list is expected to not include the empty value ''
-# In pywren-annotation-pipeline the modifiers list includes '', so it has to be removed before this is called
+# In Lithops-METASPACE the modifiers list includes '', so it has to be removed before this is called
 #
 # FDR.estimate_fdr expects formula_msm to have `formula` and `adduct` columns,
-# but pywren-annotation-pipeline doesn't normally carry these through the whole pipeline
+# but Lithops-METASPACE doesn't normally carry these through the whole pipeline
 
 import logging
 from itertools import product

@@ -77,7 +77,7 @@ def get_formulas_df(storage, db_config, ds_config, mols_dbs_cobjects):
         del formula_map_df['ion_formula']
 
     def _store_db_data(db_data):
-        return storage.put_cobject(serialise(db_data))
+        return storage.put_cloudobject(serialise(db_data))
 
     with ThreadPoolExecutor() as pool:
         db_data_cobjects = list(pool.map(_store_db_data, db_datas))
@@ -91,7 +91,7 @@ def store_formula_segments(storage, formulas_df):
     segm_list = [formulas_df.ion_formula.iloc[start:end] for start, end in segm_ranges]
 
     def _store(segm):
-        return storage.put_cobject(serialise(segm))
+        return storage.put_cloudobject(serialise(segm))
 
     with ThreadPoolExecutor(max_workers=128) as pool:
         formula_cobjects = list(pool.map(_store, segm_list))

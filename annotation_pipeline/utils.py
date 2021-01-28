@@ -3,13 +3,12 @@ from concurrent.futures.thread import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime
 import numpy as np
-import ibm_boto3
-import ibm_botocore
 import pandas as pd
 import pyarrow as pa
 from io import BytesIO
 import pickle
 import requests
+from lithops.storage.utils import CloudObject, StorageNoSuchKeyError
 
 logging.getLogger('ibm_boto3').setLevel(logging.CRITICAL)
 logging.getLogger('ibm_botocore').setLevel(logging.CRITICAL)
@@ -34,13 +33,13 @@ class PipelineStats:
         pd.DataFrame(content).to_csv(cls.path, mode='a', header=False, index=False)
 
     @classmethod
-    def append_pywren(cls, futures, memory_mb, cloud_objects_n=0):
+    def append_func(cls, futures, memory_mb, cloud_objects_n=0):
         if type(futures) != list:
             futures = [futures]
 
         def calc_cost(runtimes, memory_gb):
-            pywren_unit_price_in_dollars = 0.000017
-            return sum([pywren_unit_price_in_dollars * memory_gb * runtime for runtime in runtimes])
+            cost_in_dollars_per_gb_sec = 0.000017
+            return sum([cost_in_dollars_per_gb_sec * memory_gb * runtime for runtime in runtimes])
 
         actions_num = len(futures)
         func_name = futures[0].function_name
@@ -55,57 +54,60 @@ class PipelineStats:
     @classmethod
     def get(cls):
         stats = pd.read_csv(cls.path)
-        print('Total PyWren cost: {:.3f} $'.format(stats['Cost'].sum()))
+        print('Total cost: {:.3f} $ (Using IBM Cloud pricing)'.format(stats['Cost'].sum()))
         return stats
 
 
-def get_ibm_cos_client(config):
-    client_config = ibm_botocore.client.Config(connect_timeout=1,
-                                               read_timeout=3,
-                                               retries={'max_attempts': 5})
+def upload_if_needed(storage, src, target_bucket, target_prefix=None):
+    example_prefix = 'cos://embl-datasets/'
+    if src.startswith(example_prefix):
+        can_access_directly = (
+            storage.backend in ('ibm_cos', 'cos')
+            and object_exists(storage, 'embl-datasets', src[len(example_prefix):])
+        )
+        if not can_access_directly:
+            # If using the sample datasets with a non-COS storage backend, use HTTPS instead
+            logger.info(f'Translating IBM COS path to public HTTPS path for example file "{src}"')
+            src = src.replace(example_prefix, 'https://s3.us-east.cloud-object-storage.appdomain.cloud/embl-datasets/')
 
-    return ibm_boto3.client(service_name='s3',
-                            aws_access_key_id=config['ibm_cos']['access_key'],
-                            aws_secret_access_key=config['ibm_cos']['secret_key'],
-                            endpoint_url=config['ibm_cos']['endpoint'],
-                            config=client_config)
+    if '://' in src:
+        backend, path = src.split('://', maxsplit=1)
+        bucket, key = path.split('/', maxsplit=1)
+    else:
+        backend = None
+        bucket = None
+        filename = Path(src).name
+        key = f'{target_prefix}/{filename}' if target_prefix else filename
 
+    if backend not in ('https', 'http', None):
+        # If it's not HTTP / filesystem, assume it's a bucket/key that Lithops can find
+        assert object_exists(storage, bucket, key), f'Could not resolve input path "{src}"'
+        return CloudObject(storage.backend, bucket, key)
 
-def upload_to_cos(cos_client, src, target_bucket, target_key):
-    logger.info('Copying from {} to {}/{}'.format(src, target_bucket, target_key))
-    with open(src, "rb") as fp:
-        cos_client.put_object(Bucket=target_bucket, Key=target_key, Body=fp)
-    logger.info('Copy completed for {}/{}'.format(target_bucket, target_key))
+    if object_exists(storage, target_bucket, key):
+        # If the file would have to be uploaded, but there's already a copy in the storage bucket, use it
+        logger.debug(f'Found input file already uploaded at "{storage.backend}://{target_bucket}/{key}"')
+        return CloudObject(storage.backend, target_bucket, key)
+    else:
+        # Upload from HTTP or filesystem
+        if backend in ('https', 'http'):
+            r = requests.get(src, stream=True)
+            r.raise_for_status()
+            stream = r.raw
+        else:
+            src_path = Path(src)
+            assert src_path.exists(), f'Could not find input file "{src}"'
+            stream = src_path.open('rb')
 
-
-def list_keys(bucket, prefix, cos_client):
-    paginator = cos_client.get_paginator('list_objects_v2')
-    page_iterator = paginator.paginate(Bucket=bucket, Prefix=prefix)
-
-    key_list = []
-    for page in page_iterator:
-        if 'Contents' in page:
-            for item in page['Contents']:
-                key_list.append(item['Key'])
-
-    logger.info(f'Listed {len(key_list)} objects from {prefix}')
-    return key_list
-
-
-def clean_from_cos(config, bucket, prefix, cos_client=None):
-    if not cos_client:
-        cos_client = get_ibm_cos_client(config)
-
-    objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
-    removed_keys_n = 0
-    while 'Contents' in objs:
-        keys = [obj['Key'] for obj in objs['Contents']]
-        formatted_keys = {'Objects': [{'Key': key} for key in keys]}
-        cos_client.delete_objects(Bucket=bucket, Delete=formatted_keys)
-        removed_keys_n += objs["KeyCount"]
-        objs = cos_client.list_objects_v2(Bucket=bucket, Prefix=prefix)
-
-    logger.info(f'Removed {removed_keys_n} objects from {prefix}')
+        logger.info(f'Uploading "{src}" to "{storage.backend}://{target_bucket}/{key}"')
+        if hasattr(storage.get_client(), 'upload_fileobj'):
+            # Try a streaming upload through boto3 interface
+            storage.get_client().upload_fileobj(Fileobj=stream, Bucket=target_bucket, Key=key)
+            return CloudObject(storage.backend, target_bucket, key)
+        else:
+            # Fall back to buffering the entire object in memory for other backends
+            data = stream.read()
+            return storage.put_cloudobject(data, target_bucket, key)
 
 
 def ds_imzml_path(ds_data_path):
@@ -149,12 +151,21 @@ def serialise(obj):
         return BytesIO(pickle.dumps(obj))
 
 
-def deserialise(serialised_obj):
-    data = serialised_obj.read()
+def deserialise(data):
+    if hasattr(data, 'read'):
+        data = data.read()
     try:
         return pa.deserialize(data)
     except pa.lib.ArrowInvalid:
         return pickle.loads(data)
+
+
+def object_exists(storage, bucket, key):
+    try:
+        storage.head_object(bucket, key)
+        return True
+    except StorageNoSuchKeyError:
+        return False
 
 
 def read_object_with_retry(storage, bucket, key, stream_reader=None):
@@ -162,7 +173,7 @@ def read_object_with_retry(storage, bucket, key, stream_reader=None):
     for attempt in range(1, 4):
         try:
             logger.debug(f'Reading {key} (attempt {attempt})')
-            data_stream = storage.get_object(Bucket=bucket, Key=key)['Body']
+            data_stream = storage.get_object(bucket, key, stream=True)
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
@@ -181,7 +192,7 @@ def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
     for attempt in range(1, 4):
         try:
             logger.debug(f'Reading {cobject.key} (attempt {attempt})')
-            data_stream = storage.get_cobject(cobject, stream=True)
+            data_stream = storage.get_cloudobject(cobject, stream=True)
             if stream_reader:
                 data = stream_reader(data_stream)
             else:
@@ -195,9 +206,9 @@ def read_cloud_object_with_retry(storage, cobject, stream_reader=None):
     raise last_exception
 
 
-def read_ranges_from_url(storage, url, ranges):
+def read_ranges_from_url(storage, cobj_or_url, ranges):
     """
-    Download partial ranges from a file over HTTP/COS. This combines adjacent/overlapping ranges
+    Download partial ranges from a file over HTTP/COS/Lithops. This combines adjacent/overlapping ranges
     to minimize the number of HTTP requests without wasting any bandwidth if there are large gaps
     between requested ranges.
     """
@@ -227,11 +238,11 @@ def read_ranges_from_url(storage, url, ranges):
     with ThreadPoolExecutor() as ex:
         def get_range(lo_hi):
             lo, hi = lo_hi
-            if url.startswith('cos://'):
-                bucket, key = url[len('cos://'):].split('/', maxsplit=1)
-                return storage.get_object(Bucket=bucket, Key=key, Range=f'bytes={lo}-{hi}')['Body'].read()
+            headers = {'Range': f'bytes={lo}-{hi}'}
+            if isinstance(cobj_or_url, CloudObject):
+                return storage.get_object(cobj_or_url.bucket, cobj_or_url.key, extra_get_args=headers)
             else:
-                return requests.get(url, headers={'Range': f'bytes={lo}-{hi}'}).content
+                return requests.get(cobj_or_url, headers=headers).content
         request_results = list(ex.map(get_range, request_ranges))
 
     return [request_results[request_i][request_lo:request_hi]

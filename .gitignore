@@ -4,6 +4,7 @@ __pycache__
 /metabolomics
 /input
 /output
+/logs
 config.json
 input_config.json
 *-dev.ipynb

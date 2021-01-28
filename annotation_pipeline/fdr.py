@@ -56,7 +56,7 @@ def build_fdr_rankings(pw, config_ds, config_db, mol_dbs_cobjects, formula_to_id
             ranking_df = pd.DataFrame({'msm': msm})
             ranking_df = ranking_df[~ranking_df.msm.isna()]
 
-        return id, storage.put_cobject(serialise(ranking_df))
+        return id, storage.put_cloudobject(serialise(ranking_df))
 
     decoy_adducts = sorted(set(DECOY_ADDUCTS).difference(config_db['adducts']))
     n_decoy_rankings = config_ds.get('num_decoys', len(decoy_adducts))
@@ -74,7 +74,7 @@ def build_fdr_rankings(pw, config_ds, config_db, mol_dbs_cobjects, formula_to_id
     memory_capacity_mb = 1536
     futures = pw.map(build_ranking, ranking_jobs, runtime_memory=memory_capacity_mb)
     ranking_cobjects = [cobject for job_i, cobject in sorted(pw.get_result(futures))]
-    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
+    PipelineStats.append_func(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     rankings_df = pd.DataFrame(ranking_jobs, columns=['group_i', 'ranking_i', 'database_path', 'modifier', 'adduct'])
     rankings_df = rankings_df.assign(is_target=~rankings_df.adduct.isnull(), cobject=ranking_cobjects)
@@ -120,12 +120,12 @@ def calculate_fdrs(pw, rankings_df):
         decoy_rows = group[~group.is_target]
 
         for i, target_row in target_rows.iterrows():
-            ranking_jobs.append([target_row, decoy_rows.cobject.tolist()])
+            ranking_jobs.append((target_row, decoy_rows.cobject.tolist()))
 
     memory_capacity_mb = 256
     futures = pw.map(merge_rankings, ranking_jobs, runtime_memory=memory_capacity_mb)
     results = pw.get_result(futures)
-    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb)
+    PipelineStats.append_func(futures, memory_mb=memory_capacity_mb)
 
     return pd.concat(results)
 

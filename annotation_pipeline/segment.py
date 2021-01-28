@@ -15,27 +15,23 @@ from concurrent.futures import ThreadPoolExecutor
 MAX_MZ_VALUE = 10 ** 5
 
 
-def get_imzml_reader(pw, imzml_path):
+def get_imzml_reader(pw, imzml_cobject):
     def get_portable_imzml_reader(storage):
-        if imzml_path.startswith('cos://'):
-            bucket, key = imzml_path[len('cos://'):].split('/', maxsplit=1)
-            imzml_stream = storage.get_object(bucket, key, stream=True)
-        else:
-            imzml_stream = requests.get(imzml_path, stream=True).raw
+        imzml_stream = storage.get_cloudobject(imzml_cobject, stream=True)
         parser = ImzMLParser(imzml_stream, ibd_file=None)
         imzml_reader = parser.portable_spectrum_reader()
-        imzml_cobject = storage.put_cobject(serialise(imzml_reader))
-        return imzml_reader, imzml_cobject
+        imzml_reader_cobject = storage.put_cloudobject(serialise(imzml_reader))
+        return imzml_reader, imzml_reader_cobject
 
     memory_capacity_mb = 1024
     future = pw.call_async(get_portable_imzml_reader, [])
-    imzml_reader, imzml_cobject = pw.get_result(future)
-    PipelineStats.append_pywren(future, memory_mb=memory_capacity_mb, cloud_objects_n=1)
+    imzml_reader, imzml_reader_cobject = pw.get_result(future)
+    PipelineStats.append_func(future, memory_mb=memory_capacity_mb, cloud_objects_n=1)
 
-    return imzml_reader, imzml_cobject
+    return imzml_reader, imzml_reader_cobject
 
 
-def get_spectra(storage, ibd_url, imzml_reader, sp_inds):
+def get_spectra(storage, ibd_cobject, imzml_reader, sp_inds):
     mz_starts = np.array(imzml_reader.mzOffsets)[sp_inds]
     mz_ends = mz_starts + np.array(imzml_reader.mzLengths)[sp_inds] * np.dtype(imzml_reader.mzPrecision).itemsize
     mz_ranges = np.stack([mz_starts, mz_ends], axis=1)
@@ -43,7 +39,7 @@ def get_spectra(storage, ibd_url, imzml_reader, sp_inds):
     int_ends = int_starts + np.array(imzml_reader.intensityLengths)[sp_inds] * np.dtype(imzml_reader.intensityPrecision).itemsize
     int_ranges = np.stack([int_starts, int_ends], axis=1)
     ranges_to_read = np.vstack([mz_ranges, int_ranges])
-    data_ranges = read_ranges_from_url(storage.get_client(), ibd_url, ranges_to_read)
+    data_ranges = read_ranges_from_url(storage, ibd_cobject, ranges_to_read)
     mz_data = data_ranges[:len(sp_inds)]
     int_data = data_ranges[len(sp_inds):]
     del data_ranges
@@ -55,7 +51,7 @@ def get_spectra(storage, ibd_url, imzml_reader, sp_inds):
         yield sp_idx, mzs, ints
 
 
-def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
+def chunk_spectra(pw, ibd_cobject, imzml_reader_cobject, imzml_reader):
     MAX_CHUNK_SIZE = 512 * 1024 ** 2  # 512MB
 
     sp_id_to_idx = get_pixel_indices(imzml_reader.coordinates)
@@ -84,13 +80,13 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
 
     def upload_chunk(ch_i, storage):
         chunk_sp_inds = chunks[ch_i]
-        # Get imzml_reader from COS because it's too big to include via pywren captured vars
-        imzml_reader = read_cloud_object_with_retry(storage, imzml_cobject, deserialise)
+        # Get imzml_reader from COS because it's too big to include via Lithops captured vars
+        imzml_reader = read_cloud_object_with_retry(storage, imzml_reader_cobject, deserialise)
         n_spectra = sum(imzml_reader.mzLengths[sp_i] for sp_i in chunk_sp_inds)
         sp_mz_int_buf = np.zeros((n_spectra, 3), dtype=imzml_reader.mzPrecision)
 
         chunk_start = 0
-        for sp_i, mzs, ints in get_spectra(storage, ibd_path, imzml_reader, chunk_sp_inds):
+        for sp_i, mzs, ints in get_spectra(storage, ibd_cobject, imzml_reader, chunk_sp_inds):
             chunk_end = chunk_start + len(mzs)
             sp_mz_int_buf[chunk_start:chunk_end, 0] = sp_id_to_idx[sp_i]
             sp_mz_int_buf[chunk_start:chunk_end, 1] = mzs
@@ -104,26 +100,26 @@ def chunk_spectra(pw, ibd_path, imzml_cobject, imzml_reader):
         chunk = serialise(sp_mz_int_buf)
         size = sys.getsizeof(chunk) * (1 / 1024 ** 2)
         logger.info(f'Uploading spectra chunk {ch_i} - %.2f MB' % size)
-        chunk_cobject = storage.put_cobject(chunk)
+        chunk_cobject = storage.put_cloudobject(chunk)
         logger.info(f'Spectra chunk {ch_i} finished')
         return chunk_cobject
 
     chunks = list(plan_chunks())
     memory_capacity_mb = 3072
-    futures = pw.map(upload_chunk, range(len(chunks)), runtime_memory=memory_capacity_mb)
+    futures = pw.map(upload_chunk, [(i,) for i in range(len(chunks))], runtime_memory=memory_capacity_mb)
     ds_chunks_cobjects = pw.get_result(futures)
-    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(chunks))
+    PipelineStats.append_func(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(chunks))
 
     return ds_chunks_cobjects
 
 
-def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
+def define_ds_segments(pw, ibd_cobject, imzml_reader_cobject, ds_segm_size_mb, sample_n):
     def get_segm_bounds(storage):
-        imzml_reader = read_cloud_object_with_retry(storage, imzml_cobject, deserialise)
+        imzml_reader = read_cloud_object_with_retry(storage, imzml_reader_cobject, deserialise)
         sp_n = len(imzml_reader.coordinates)
         sample_sp_inds = np.random.choice(np.arange(sp_n), min(sp_n, sample_n))
         print(f'Sampling {len(sample_sp_inds)} spectra')
-        spectra_sample = list(get_spectra(storage, ibd_url, imzml_reader, sample_sp_inds))
+        spectra_sample = list(get_spectra(storage, ibd_cobject, imzml_reader, sample_sp_inds))
 
         spectra_mzs = np.concatenate([mzs for sp_id, mzs, ints in spectra_sample])
         print(f'Got {len(spectra_mzs)} mzs')
@@ -140,7 +136,7 @@ def define_ds_segments(pw, ibd_url, imzml_cobject, ds_segm_size_mb, sample_n):
     memory_capacity_mb = 1024
     future = pw.call_async(get_segm_bounds, [], runtime_memory=memory_capacity_mb)
     ds_segments = pw.get_result(future)
-    PipelineStats.append_pywren(future, memory_mb=memory_capacity_mb)
+    PipelineStats.append_func(future, memory_mb=memory_capacity_mb)
     return ds_segments
 
 
@@ -168,7 +164,7 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
             r = ds_segments_bounds[segm_i][-1, 1]
             segm_start, segm_end = np.searchsorted(sp_mz_int_buf[:, 1], (l, r))  # mz expected to be in column 1
             segm = sp_mz_int_buf[segm_start:segm_end]
-            return storage.put_cobject(serialise(segm))
+            return storage.put_cloudobject(serialise(segm))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             sub_segms_cobjects = list(pool.map(_first_level_segment_upload, range(len(ds_segments_bounds))))
@@ -177,10 +173,14 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
 
     memory_safe_mb = 1536
     memory_capacity_mb = first_level_segm_size_mb * 2 + memory_safe_mb
-    first_futures = pw.map(segment_spectra_chunk, ds_chunks_cobjects, runtime_memory=memory_capacity_mb)
+    first_futures = pw.map(
+        segment_spectra_chunk,
+        [(co,) for co in ds_chunks_cobjects],
+        runtime_memory=memory_capacity_mb,
+    )
     first_level_segms_cobjects = pw.get_result(first_futures)
     if not isinstance(first_futures, list): first_futures = [first_futures]
-    PipelineStats.append_pywren(first_futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(first_futures) * len(ds_segments_bounds))
+    PipelineStats.append_func(first_futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(first_futures) * len(ds_segments_bounds))
 
     def merge_spectra_chunk_segments(segm_cobjects, id, storage):
         print(f'Merging segment {id} spectra chunks')
@@ -210,19 +210,19 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
             base_id = sum([len(bounds) for bounds in ds_segments_bounds[:id]])
             segm_i = base_id + segm_j
             print(f'Storing dataset segment {segm_i}')
-            segms_cobjects.append(storage.put_cobject(serialise(sub_segm)))
+            segms_cobjects.append(storage.put_cloudobject(serialise(sub_segm)))
 
         return segms_len, segms_cobjects
 
     second_level_segms_cobjects = np.transpose(first_level_segms_cobjects).tolist()
-    second_level_segms_cobjects = [[segm_cobjects] for segm_cobjects in second_level_segms_cobjects]
+    second_level_segms_cobjects = [(segm_cobjects,) for segm_cobjects in second_level_segms_cobjects]
 
     # same memory capacity
     second_futures = pw.map(merge_spectra_chunk_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     ds_segms_len, ds_segms_cobjects = list(zip(*pw.get_result(second_futures)))
     ds_segms_len = list(np.concatenate(ds_segms_len))
     ds_segms_cobjects = list(np.concatenate(ds_segms_cobjects))
-    PipelineStats.append_pywren(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=ds_segm_n)
+    PipelineStats.append_func(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=ds_segm_n)
 
     assert len(ds_segms_cobjects) == len(set(co.key for co in ds_segms_cobjects)), 'Duplicate CloudObjects in ds_segms_cobjects'
 
@@ -233,13 +233,13 @@ def segment_spectra(pw, ds_chunks_cobjects, ds_segments_bounds, ds_segm_size_mb,
 def clip_centr_df(pw, peaks_cobjects, mz_min, mz_max):
     def clip_centr_df_chunk(peaks_i, peaks_cobject, storage):
         print(f'Clipping centroids dataframe chunk {peaks_i}')
-        centroids_df_chunk = deserialise(storage.get_cobject(peaks_cobject, stream=True)).sort_values('mz')
+        centroids_df_chunk = deserialise(storage.get_cloudobject(peaks_cobject, stream=True)).sort_values('mz')
         centroids_df_chunk = centroids_df_chunk[centroids_df_chunk.mz > 0]
 
         ds_mz_range_unique_formulas = centroids_df_chunk[(mz_min < centroids_df_chunk.mz) &
                                                          (centroids_df_chunk.mz < mz_max)].index.unique()
         centr_df_chunk = centroids_df_chunk[centroids_df_chunk.index.isin(ds_mz_range_unique_formulas)].reset_index()
-        clip_centr_chunk_cobject = storage.put_cobject(serialise(centr_df_chunk))
+        clip_centr_chunk_cobject = storage.put_cloudobject(serialise(centr_df_chunk))
 
         return clip_centr_chunk_cobject, centr_df_chunk.shape[0]
 
@@ -247,7 +247,7 @@ def clip_centr_df(pw, peaks_cobjects, mz_min, mz_max):
     futures = pw.map(clip_centr_df_chunk, list(enumerate(peaks_cobjects)),
                      runtime_memory=memory_capacity_mb)
     clip_centr_chunks_cobjects, centr_n = list(zip(*pw.get_result(futures)))
-    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
+    PipelineStats.append_func(futures, memory_mb=memory_capacity_mb, cloud_objects_n=len(futures))
 
     clip_centr_chunks_cobjects = list(clip_centr_chunks_cobjects)
     centr_n = sum(centr_n)
@@ -267,7 +267,7 @@ def define_centr_segments(pw, clip_centr_chunks_cobjects, centr_n, ds_segm_n, ds
     memory_capacity_mb = 512
     futures = pw.map(get_first_peak_mz, clip_centr_chunks_cobjects, runtime_memory=memory_capacity_mb)
     first_peak_df_mz = np.concatenate(pw.get_result(futures))
-    PipelineStats.append_pywren(futures, memory_mb=memory_capacity_mb)
+    PipelineStats.append_func(futures, memory_mb=memory_capacity_mb)
 
     ds_size_mb = ds_segm_n * ds_segm_size_mb
     data_per_centr_segm_mb = 50
@@ -305,7 +305,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
         def _first_level_upload(args):
             segm_i, df = args
             del df['segm_i']
-            return segm_i, storage.put_cobject(serialise(df))
+            return segm_i, storage.put_cloudobject(serialise(df))
 
         with ThreadPoolExecutor(max_workers=128) as pool:
             sub_segms = [(segm_i, df) for segm_i, df in centr_segm_df.groupby('segm_i')]
@@ -314,9 +314,13 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
         return dict(sub_segms_cobjects)
 
     memory_capacity_mb = 512
-    first_futures = pw.map(segment_centr_chunk, clip_centr_chunks_cobjects, runtime_memory=memory_capacity_mb)
+    first_futures = pw.map(
+        segment_centr_chunk,
+        clip_centr_chunks_cobjects,
+        runtime_memory=memory_capacity_mb,
+    )
     first_level_segms_cobjects = pw.get_result(first_futures)
-    PipelineStats.append_pywren(first_futures, memory_mb=memory_capacity_mb,
+    PipelineStats.append_func(first_futures, memory_mb=memory_capacity_mb,
                                 cloud_objects_n=len(first_futures) * len(centr_segm_lower_bounds))
 
     def merge_centr_df_segments(segm_cobjects, id, storage):
@@ -367,7 +371,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
             max_ds_segms_to_download_n, max_segm = segms[0]
 
         def _second_level_upload(df):
-            return storage.put_cobject(serialise(df))
+            return storage.put_cloudobject(serialise(df))
 
         print(f'Storing {len(segms)} centroids segments')
         with ThreadPoolExecutor(max_workers=128) as pool:
@@ -381,7 +385,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
         for first_level_segm_i in sub_segms_cobjects:
             second_level_segms_cobjects[first_level_segm_i].append(sub_segms_cobjects[first_level_segm_i])
     second_level_segms_cobjects = sorted(second_level_segms_cobjects.items(), key=lambda x: x[0])
-    second_level_segms_cobjects = [[cobjects] for segm_i, cobjects in second_level_segms_cobjects]
+    second_level_segms_cobjects = [(cobjects,) for segm_i, cobjects in second_level_segms_cobjects]
 
     first_level_cobjs = [co for cos in first_level_segms_cobjects for co in cos.values()]
     assert len(first_level_cobjs) == len(set(co.key for co in first_level_cobjs)), 'Duplicate CloudObject key in first_level_segms_cobjects'
@@ -389,7 +393,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
     memory_capacity_mb = 2048
     second_futures = pw.map(merge_centr_df_segments, second_level_segms_cobjects, runtime_memory=memory_capacity_mb)
     db_segms_cobjects = list(np.concatenate(pw.get_result(second_futures)))
-    PipelineStats.append_pywren(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
+    PipelineStats.append_func(second_futures, memory_mb=memory_capacity_mb, cloud_objects_n=centr_segm_n)
 
     assert len(db_segms_cobjects) == len(set(co.key for co in db_segms_cobjects)), 'Duplicate CloudObject key in db_segms_cobjects'
 
@@ -399,7 +403,7 @@ def segment_centroids(pw, clip_centr_chunks_cobjects, centr_segm_lower_bounds, d
 
 def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
     def get_segm_stats(storage, segm_cobject):
-        segm = deserialise(storage.get_cobject(segm_cobject, stream=True))
+        segm = deserialise(storage.get_cloudobject(segm_cobject, stream=True))
         mzs = np.sort(segm.mz.values)
         ds_segm_lo, ds_segm_hi = choose_ds_segments(ds_segms_bounds, segm, ppm)
         n_peaks = segm.groupby('formula_i').peak_i.count()
@@ -425,7 +429,7 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
         })
         return formula_is, stats
 
-    futures = pw.map(get_segm_stats, db_segms_cobjects, runtime_memory=1024)
+    futures = pw.map(get_segm_stats, [(co,) for co in db_segms_cobjects], runtime_memory=1024)
     results = pw.get_result(futures)
     segm_formula_is = [formula_is for formula_is, stats in results]
     stats_df = pd.DataFrame([stats for formula_is, stats in results])
@@ -473,13 +477,13 @@ def validate_centroid_segments(pw, db_segms_cobjects, ds_segms_bounds, ppm):
         logger.warning(formulas_in_multiple_segms_df)
 
 
-def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len, vm_algorithm):
+def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects, ds_segms_len, hybrid_impl):
     def get_segm_stats(cobject, storage):
-        segm = read_ds_segment(cobject, vm_algorithm, storage)
+        segm = read_ds_segment(cobject, hybrid_impl, storage)
         assert (segm.columns == ['mz', 'int', 'sp_i']).all(), f'Wrong ds_segm columns: {segm.columns}'
         assert isinstance(segm.index, pd.RangeIndex), f'ds_segm does not have a RangeIndex {segm.index}'
 
-        if vm_algorithm:
+        if hybrid_impl:
             assert segm.dtypes[1] == np.float32, 'ds_segm.int should be float32'
             assert segm.dtypes[2] == np.uint32, 'ds_segm.sp_i should be uint32'
 
@@ -490,7 +494,7 @@ def validate_ds_segments(pw, imzml_reader, ds_segments_bounds, ds_segms_cobjects
             'is_sorted': segm.mz.is_monotonic,
         })
 
-    futures = pw.map(get_segm_stats, ds_segms_cobjects)
+    futures = pw.map(get_segm_stats, [(co,) for co in ds_segms_cobjects])
     results = pw.get_result(futures)
 
     segms_df = pd.DataFrame(results)

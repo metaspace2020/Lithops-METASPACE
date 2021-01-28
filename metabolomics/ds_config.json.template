@@ -1,7 +1,7 @@
 {
   "name": "****",
-  "imzml_path": "https://****.imzML",
-  "ibd_path": "https://****.ibd",
+  "imzml_path": "https://****.imzML or C:\****.imzML",
+  "ibd_path": "https://****.ibd or C:\****.ibd",
   "num_decoys": 20,
   "polarity": "+",
   "isocalc_sigma": 0.001238,

@@ -1,6 +1,8 @@
 import os
+from shutil import copyfileobj
 from tempfile import TemporaryDirectory
 import requests
+from lithops.storage.utils import CloudObject
 from pyimzml.ImzMLParser import ImzMLParser
 from concurrent.futures.process import ProcessPoolExecutor
 from concurrent.futures.thread import ThreadPoolExecutor
@@ -12,13 +14,14 @@ import pandas as pd
 from annotation_pipeline.utils import logger, serialise_to_file, deserialise_from_file, serialise
 
 
-def download_dataset(imzml_url, ibd_url, local_path, storage):
-    def _download(url, path):
-        if url.startswith('cos://'):
-            bucket, key = url[len('cos://'):].split('/', maxsplit=1)
-            storage.get_client().download_file(bucket, key, str(path))
+def download_dataset(imzml_cobject, ibd_cobject, local_path, storage):
+    def _download(url_or_cobject, path):
+        if isinstance(url_or_cobject, CloudObject):
+            stream = storage.get_cloudobject(url_or_cobject, stream=True)
+            with path.open('wb') as f:
+                copyfileobj(stream, f, 1024 * 1024)
         else:
-            with requests.get(url, stream=True) as r:
+            with requests.get(url_or_cobject, stream=True) as r:
                 r.raise_for_status()
                 with path.open('wb') as f:
                     for chunk in r.iter_content():
@@ -28,12 +31,10 @@ def download_dataset(imzml_url, ibd_url, local_path, storage):
     imzml_path = local_path / 'ds.imzML'
     ibd_path = local_path / 'ds.ibd'
 
-    # with ThreadPoolExecutor() as ex:
-    #     ex.map(_download, [imzml_url, ibd_url], [imzml_path, ibd_path])
-    logger.info("Download dataset {} - {} ".format(imzml_url, imzml_path))
-    _download(imzml_url, imzml_path)
-    logger.info("Download dataset {} - {} ".format(ibd_url, ibd_path))
-    _download(ibd_url, ibd_path)
+    logger.info("Download dataset {} - {} ".format(imzml_cobject, imzml_path))
+    _download(imzml_cobject, imzml_path)
+    logger.info("Download dataset {} - {} ".format(ibd_cobject, ibd_path))
+    _download(ibd_cobject, ibd_path)
 
     imzml_size = imzml_path.stat().st_size / (1024 ** 2)
     ibd_size = ibd_path.stat().st_size / (1024 ** 2)
@@ -147,7 +148,7 @@ def upload_segments(storage, ds_segments_path, chunks_n, segments_n):
         segm.reset_index(drop=True, inplace=True)
         segm = serialise(segm)
         logger.debug(f'Uploading segment {segm_i}: {segm.getbuffer().nbytes} bytes')
-        return storage.put_cobject(segm)
+        return storage.put_cloudobject(segm)
 
     with ThreadPoolExecutor(os.cpu_count()) as pool:
         ds_segms_cobjects = list(pool.map(_upload, range(segments_n)))
@@ -189,7 +190,7 @@ def make_segments(imzml_reader, ibd_path, ds_segments_bounds, segments_dir, sort
     return chunks_n, ds_segms_len
 
 
-def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory):
+def load_and_split_ds_vm(storage, imzml_cobject, ibd_cobject, ds_segm_size_mb, sort_memory):
     stats = []
 
     with TemporaryDirectory() as tmp_dir:
@@ -203,7 +204,7 @@ def load_and_split_ds_vm(storage, ds_config, ds_segm_size_mb, sort_memory):
 
         logger.info('Downloading dataset...')
         t = time()
-        imzml_path, ibd_path = download_dataset(ds_config['imzml_path'], ds_config['ibd_path'], imzml_dir, storage)
+        imzml_path, ibd_path = download_dataset(imzml_cobject, ibd_cobject, imzml_dir, storage)
         stats.append(('download_dataset', time() - t))
 
         logger.info('Loading parser...')

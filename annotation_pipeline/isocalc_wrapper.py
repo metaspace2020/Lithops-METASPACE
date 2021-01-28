@@ -12,7 +12,7 @@ ISOTOPIC_PEAK_N = 4
 SIGMA_TO_FWHM = 2.3548200450309493  # 2 \sqrt{2 \log 2}
 
 
-class IsocalcWrapper(object):
+class IsocalcWrapper:
     """ Wrapper around pyMSpec.pyisocalc.pyisocalc used for getting theoretical isotope peaks'
     centroids and profiles for a sum formula.
 

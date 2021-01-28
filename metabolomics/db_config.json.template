@@ -1,10 +1,10 @@
 {
   "name": "db_configN",
   "databases": [
-    "metabolomics/db/mol_db1.pickle",
-    "metabolomics/db/mol_db2.pickle",
-    "metabolomics/db/mol_db3.pickle",
-    "metabolomics/db/mol_db4.pickle"
+    "metabolomics/db/mol_db1.csv",
+    "metabolomics/db/mol_db2.csv",
+    "metabolomics/db/mol_db3.csv",
+    "metabolomics/db/mol_db4.csv"
   ],
   "adducts": ["","+H","+Na","+K"],
   "modifiers": ["", "-H2O", "-CO2", "-NH3"]

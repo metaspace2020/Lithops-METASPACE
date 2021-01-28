@@ -1,5 +1,5 @@
 # Python 3.7.5
-FROM python:3.7.5-slim-buster
+FROM python:3.8.5-slim-buster
 
 RUN apt-get update && apt-get install -y \
         zip \
@@ -24,19 +24,20 @@ RUN pip install --upgrade setuptools six \
         gevent==1.4.0 \
         ibm-cos-sdk==2.5.3 \
         redis==3.3.8 \
-        requests==2.22 \
-        numpy==1.17.2 \
-        # Modules for annotation-pipeline:
-        cpyMSpec==0.3.5 \
-        pyMSpec==0.1.2 \
-        cpyImagingMSpec==0.2.4 \
-        pyImagingMSpec==0.1.4 \
-        pandas==0.25.1 \
+        # Modules for annotation-pipeline (These should match setup.py)
+        pandas==1.1.3 \
         pyarrow==1.0.1 \
-        scipy==1.3.1 \
+        scipy==1.5.3 \
+        pyImagingMSpec==0.1.4 \
+        cpyImagingMSpec==0.2.4 \
+        pyMSpec==0.1.2 \
+        cpyMSpec==0.3.5 \
+	    pyimzML==1.4.1 \
+        requests==2.22.0 \
         msgpack==0.6.2 \
         msgpack-numpy==0.4.4.3 \
-	    pyimzML==1.3.0
+	    pypng==0.0.19
+
 
 # Copy PyWren proxy and lib to the container image.
 ENV APP_HOME /pywren
