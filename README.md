@@ -2,7 +2,9 @@
 This repository demonstrates using [Lithops](https://github.com/lithops-cloud/lithops) to run the 
 [METASPACE metabolite annotation pipeline](https://github.com/metaspace2020/metaspace/tree/master/metaspace/engine) on cloud resources.
 
-Annotating high-resolution imaging mass spectrometry data often requires multiple CPU-days  
+METASPACE is a cloud engine for spatial metabolomics that performs molecular annotation of imaging mass spectrometry data. It takes an imaging mass spectrometry dataset and outputs molecules (e.g. metabolites and lipids) which are represented in the dataset, with assigned scores and false discovery rates. METASPACE is free and open source and is developed by the [Alexandrov team at EMBL Heidelberg](https://www.embl.de/research/units/scb/alexandrov/) with the generous European and US funding. It is used by a growing community over 500 users across the world. For more information, visit [METASPACE website](https://metaspace2020.eu).
+
+Annotating high-resolution imaging mass spectrometry data often requires multiple CPU-days 
 and >100GB of temporary storage, often making it impractical to run on typical desktop computers. 
 Lithops allows processing to be almost seamlessly offloaded to cloud compute resources, 
 rapidly scaling up to use as much compute power is available in your cloud of choice 
