@@ -18,7 +18,7 @@ setup(name='Lithops-METASPACE',
           "pyMSpec==0.1.2",
           "cpyMSpec==0.3.5",
           "pyimzML==1.4.1",
-          "requests==2.22.0",
+          "requests==2.31.0",
           "msgpack==0.6.2",
           "msgpack-numpy==0.4.4.3",
           "pypng==0.0.19",  # 0.0.20 introduced incompatible API changes
