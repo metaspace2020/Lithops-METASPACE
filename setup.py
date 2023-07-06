@@ -12,7 +12,7 @@ setup(name='Lithops-METASPACE',
           # in Lithops actions
           "pandas==1.1.3",
           "pyarrow==1.0.1",
-          "scipy==1.5.3",
+          "scipy==1.10.0",
           "pyImagingMSpec==0.1.4",
           "cpyImagingMSpec==0.3.2",
           "pyMSpec==0.1.2",
